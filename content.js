@@ -309,7 +309,7 @@ ${faceText}
                 e.preventDefault();
             });
 
-            document.addEventListener('mousemove', (e) => {
+            window.addEventListener('mousemove', (e) => {
                 if (!isDragging) return;
                 const dx = e.clientX - startX;
                 const dy = e.clientY - startY;
@@ -317,7 +317,7 @@ ${faceText}
                 detailsBox.style.top = (initialTop + dy) + 'px';
             });
 
-            document.addEventListener('mouseup', () => {
+            window.addEventListener('mouseup', () => {
                 if (isDragging) {
                     isDragging = false;
                     dragHandle.style.cursor = 'grab';
@@ -365,17 +365,6 @@ ${faceText}
                     badge.dataset.pinned = "false"; 
                     detailsBox.cleanupListeners(); 
                     detailsBox.remove();
-                });
-            }
-
-            const closeBtn = detailsBox.querySelector('.veritai-close-btn');
-            if (closeBtn) {
-                closeBtn.addEventListener('click', (evt) => {
-                    evt.preventDefault();
-                    evt.stopImmediatePropagation();
-                    badge.dataset.pinned = "false"; 
-                    detailsBox.remove();
-                    window.removeEventListener('resize', updatePosition);
                 });
             }
 
@@ -825,18 +814,6 @@ async function sendToBackend(blob, mediaType, analysisMode = FACE_CROP_ANALYSIS_
         }
         throw err;
     }
-
-    const response = await fetch(API_URL, {
-        method: "POST",
-        body: formData,
-    });
-
-    if (!response.ok) throw new Error(`Server response error: ${response.status}`);
-    const data = await response.json();
-    if (!data || data.status !== "DONE" || !data.result) {
-        throw new Error(data?.message || "분석이 정상적으로 완료되지 않았습니다.");
-    }
-    return data;
 }
 
 document.addEventListener('keydown', (e) => {
