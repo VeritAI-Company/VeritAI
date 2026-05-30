@@ -2,6 +2,8 @@ console.log("VeritAI content script loaded");
 const API_URL = "http://localhost:8080/api/detections";
 const FEEDBACK_URL = "http://localhost:8080/api/feedback";
 const scanCache = new Map();
+const POLL_INTERVAL_MS = 1000;
+const POLL_TIMEOUT_MS = 180000;
 
 let isSystemOn = true; // 시스템 전원
 let isAutoScanMode = false; // 자동 스캔 모드
