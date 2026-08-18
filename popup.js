@@ -17,8 +17,16 @@ function updateUI() {
     const autoOn = autoToggle.checked;
 
     autoToggle.disabled = !sysOn;
-    statusText.innerText = !sysOn ? "시스템 전원 OFF" : (autoOn ? "자동 검사 모드" : "수동 검사 모드");
-    statusText.style.color = !sysOn ? "dimgrey" : "lightskyblue";
+    
+    if (!sysOn) {
+        statusText.innerText = "시스템이 중지되었습니다";
+        statusText.style.color = "#94A3B8"; 
+        statusText.style.background = "transparent";
+    } else {
+        statusText.innerText = autoOn ? "자동 스캔 모드" : "수동 스캔 모드";
+        statusText.style.color = "#3B82F6"; 
+        statusText.style.background = "rgba(59, 130, 246, 0.1)";
+    }
 }
 
 function syncState() {
@@ -29,22 +37,12 @@ function syncState() {
     };
     
     chrome.storage.local.set(state);
-    
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]?.id && tabs[0].url && !tabs[0].url.startsWith('chrome://')) {
-            chrome.tabs.sendMessage(tabs[0].id, { action: "TOGGLE_SYSTEM", ...state }, (response) => {
-                if (chrome.runtime.lastError) {
-                    console.log("현재 탭에서는 확장프로그램이 비활성화되어 있습니다.");
-                }
-            });
-        }
-    });
 }
+
 systemToggle.addEventListener('change', syncState);
 autoToggle.addEventListener('change', syncState);
 
 document.getElementById('feedback-link').addEventListener('click', () => {
     const feedbackUrl = "https://forms.gle/실제_주소"; 
-    
     chrome.tabs.create({ url: feedbackUrl });
 });

@@ -10,7 +10,7 @@ async function setupOffscreen() {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     if (request.action === "fetch_image") {
-        fetch(request.url, { mode: 'cors' })
+        fetch(request.url)
             .then(res => res.blob())
             .then(blob => {
                 const reader = new FileReader();
@@ -30,6 +30,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
         });
         return true; 
+    }
+    else if (request.action === "keep_alive") {
+        sendResponse({ status: "alive" });
+        return true;
     }
     else {
         sendResponse({ error: "알 수 없는 요청입니다." });
