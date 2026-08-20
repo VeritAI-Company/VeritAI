@@ -16,6 +16,8 @@ const pendingInspectionQueue = [];
 const pendingDetectionPolls = new Map();
 let batchPollingActive = false;
 const MAX_CACHE_SIZE = 500;
+let mutationQueue = [];
+let observerDebounceTimer = null;
 
 function injectCSS() {
     if (document.getElementById('veritai-style-core')) return;
@@ -153,6 +155,7 @@ async function captureImageBlob(imageUrl) {
 
 async function captureVideoBlob(video) {
     if (!video) throw new Error("영상 요소를 찾을 수 없습니다.");
+    if (video.readyState < 2) {throw new Error("영상이 아직 로드되지 않았습니다."); }
     let width = video.videoWidth || video.clientWidth;
     let height = video.videoHeight || video.clientHeight;
     if (width === 0 || height === 0) throw new Error("영상 크기를 인식할 수 없습니다.");
@@ -226,9 +229,13 @@ async function sendToBackend(blob, mediaType, analysisMode = FACE_CROP_ANALYSIS_
 }
 
 function updateStatusBadge(media, status, data = null) {
+    if (!isSystemOn) return;
     const wrapper = ensureWrapper(media);
     if (!wrapper) return;
     if (!media.dataset.veritaiScanned && status !== "loading") return;
+
+    const existingBtn = wrapper.querySelector('.veritai-check-btn');
+    if (existingBtn) existingBtn.remove();
 
     const existingContainers = wrapper.querySelectorAll('.veritai-ui-container');
     if (existingContainers.length > 1) existingContainers.forEach(c => c.remove());
@@ -260,6 +267,10 @@ function updateStatusBadge(media, status, data = null) {
                 분석 중...
             </div>`;
         badge.style.background = "rgba(59, 130, 246, 0.9)";
+    }
+    else if (status === "waiting") {
+        badge.innerHTML = '대기 중...';
+        badge.style.background = "rgba(100, 116, 139, 0.9)"; 
     }
     else if (status === "error") {
         badge.innerText = data?.message || "분석 실패";
@@ -693,6 +704,8 @@ async function startInspection(media) {
         if (btn) btn.remove();
     }
 
+    updateStatusBadge(media, "waiting");
+
     return runWithInspectionLimit(async () => {
         updateStatusBadge(media, "loading");
 
@@ -722,6 +735,7 @@ async function startInspection(media) {
         else updateStatusBadge(media, "real", data);
 
     }, media).catch((err) => {
+        if (!isSystemOn) return;
         let friendlyMessage = "분석 오류";
         if (err.status === 429) friendlyMessage = "요청 과다 (잠시 후 시도)";
         else if (err.status === 408) friendlyMessage = "응답 지연 (서버 혼잡)";
@@ -763,40 +777,47 @@ const autoScanObserver = new IntersectionObserver((entries) => {
 const domObserver = new MutationObserver((mutations) => {
     if (!isSystemOn) return;
 
-    mutations.forEach(mutation => {
-        if (mutation.addedNodes) {
-            mutation.addedNodes.forEach(node => {
-                if (node.nodeType === 1 && (node.tagName === 'IMG' || node.tagName === 'VIDEO')) attachUI(node); 
-                else if (node.nodeType === 1 && node.querySelectorAll) node.querySelectorAll('img, video').forEach(media => attachUI(media));
-            });
-        }
-        if (mutation.removedNodes) {
-            mutation.removedNodes.forEach(node => {
-                if (node.nodeType === 1 && (node.tagName === 'IMG' || node.tagName === 'VIDEO')) {
-                    const key = node.dataset.veritaiScanKey;
-                    if (key) scannedMediaKeys.delete(key);
-                }
-            });
-        }
-        
-        if (mutation.type === 'attributes' && (mutation.attributeName === 'src' || mutation.attributeName === 'srcset')) {
-            const target = mutation.target;
-            if (target.tagName === 'IMG' || target.tagName === 'VIDEO') {
-                delete target.dataset.veritaiAttached;
-                delete target.dataset.veritaiScanned;
-                delete target.dataset.veritaiScanKey;
-                const wrapper = ensureWrapper(target);
-                if (wrapper) {
-                    const oldBadge = wrapper.querySelector('.veritai-ui-container');
-                    if (oldBadge) oldBadge.remove();
-                    const oldBtn = wrapper.querySelector('.veritai-check-btn');
-                    if (oldBtn) oldBtn.remove();
-                }
-                if (target.tagName === 'IMG' && !target.complete) target.addEventListener('load', () => attachUI(target), { once: true });
-                else attachUI(target); 
+    mutationQueue.push(...mutations);
+    if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
+    observerDebounceTimer = setTimeout(() => {
+        const mutationsToProcess = mutationQueue;
+        mutationQueue = []; 
+
+        mutationsToProcess.forEach(mutation => {
+            if (mutation.addedNodes) {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === 1 && (node.tagName === 'IMG' || node.tagName === 'VIDEO')) attachUI(node); 
+                    else if (node.nodeType === 1 && node.querySelectorAll) node.querySelectorAll('img, video').forEach(media => attachUI(media));
+                });
             }
-        }
-    });
+            if (mutation.removedNodes) {
+                mutation.removedNodes.forEach(node => {
+                    if (node.nodeType === 1 && (node.tagName === 'IMG' || node.tagName === 'VIDEO')) {
+                        const key = node.dataset.veritaiScanKey;
+                        if (key) scannedMediaKeys.delete(key);
+                    }
+                });
+            }
+            
+            if (mutation.type === 'attributes' && (mutation.attributeName === 'src' || mutation.attributeName === 'srcset')) {
+                const target = mutation.target;
+                if (target.tagName === 'IMG' || target.tagName === 'VIDEO') {
+                    delete target.dataset.veritaiAttached;
+                    delete target.dataset.veritaiScanned;
+                    delete target.dataset.veritaiScanKey;
+                    const wrapper = ensureWrapper(target);
+                    if (wrapper) {
+                        const oldBadge = wrapper.querySelector('.veritai-ui-container');
+                        if (oldBadge) oldBadge.remove();
+                        const oldBtn = wrapper.querySelector('.veritai-check-btn');
+                        if (oldBtn) oldBtn.remove();
+                    }
+                    if (target.tagName === 'IMG' && !target.complete) target.addEventListener('load', () => attachUI(target), { once: true });
+                    else attachUI(target); 
+                }
+            }
+        });
+    }, 150);
 });
 
 function ensureWrapper(media) {
@@ -834,6 +855,7 @@ function attachUI(media, retryCount = 0) {
         return;
     }
 
+    if (media.dataset.veritaiScanned === "true") return;
     if (media.dataset.veritaiAttached === "true" && hasUI) return;
     media.dataset.veritaiAttached = "true";
     delete media.dataset.veritaiScanned;
@@ -890,14 +912,55 @@ chrome.storage.local.get(['isSystemOn', 'isAutoScanOn'], (result) => {
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local') {
+        let modeChanged = false;
         if (changes.isSystemOn) isSystemOn = changes.isSystemOn.newValue;
-        if (changes.isAutoScanOn) isAutoScanMode = changes.isAutoScanOn.newValue;
+        if (changes.isAutoScanOn) {
+            isAutoScanMode = changes.isAutoScanOn.newValue;
+            modeChanged = true;
+        }
         
         if (!isSystemOn) {
+            while (pendingInspectionQueue.length > 0) {
+                pendingInspectionQueue.shift().reject(new Error("시스템 중지됨"));}
             autoScanObserver.disconnect();
             domObserver.disconnect();
             clearAllUI();
         } else {
+            if (modeChanged) {
+                if (!isAutoScanMode) {
+                    while (pendingInspectionQueue.length > 0) {
+                        pendingInspectionQueue.shift().reject(new Error("수동 모드 전환으로 인한 취소"));
+                    }
+                }
+
+                document.querySelectorAll('img, video').forEach(media => {
+                    if (!isAutoScanMode && media.dataset.veritaiScanned === "true") {
+                        const wrapper = ensureWrapper(media);
+                        if (wrapper) {
+                            const badge = wrapper.querySelector('.veritai-status-badge');
+                            if (badge && badge.innerHTML.includes("veritai-spin")) {
+                                delete media.dataset.veritaiScanned;
+                                if (media.dataset.veritaiScanKey) {
+                                    scannedMediaKeys.delete(media.dataset.veritaiScanKey);
+                                    delete media.dataset.veritaiScanKey;
+                                }
+                                const container = wrapper.querySelector('.veritai-ui-container');
+                                if (container) container.remove();
+                            }
+                        }
+                    }
+
+                    if (!media.dataset.veritaiScanned) {
+                        const wrapper = ensureWrapper(media);
+                        if (wrapper) {
+                            const btn = wrapper.querySelector('.veritai-check-btn');
+                            if (btn) btn.remove();
+                        }
+                        autoScanObserver.unobserve(media);
+                        delete media.dataset.veritaiAttached;
+                    }
+                });
+            }
             document.querySelectorAll('img, video').forEach(media => attachUI(media));
             domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "class"] });
         }
