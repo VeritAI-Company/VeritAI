@@ -24,16 +24,28 @@ function injectCSS() {
     const style = document.createElement('style');
     style.id = 'veritai-style-core';
     style.textContent = `
+        @keyframes veritai-fade-in-up {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
         .veritai-ui-container { position: absolute; top: 6px; left: 6px; z-index: 2147483647; display: flex; flex-direction: column; align-items: flex-start; pointer-events: none; }
         .veritai-status-badge { padding: 4px 8px; border-radius: 4px; color: white; font-size: 11px; font-weight: bold; font-family: sans-serif; box-shadow: 0 2px 4px rgba(0,0,0,0.5); transition: all 0.2s ease; user-select: none; cursor: default; pointer-events: auto !important; box-sizing: border-box !important; line-height: normal !important; }
         .veritai-check-btn { position: absolute; top: 8px; left: 8px; z-index: 2147483647; padding: 4px 10px; background-color: rgba(59, 130, 246, 0.9); color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 11px; backdrop-filter: blur(4px); transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.2); pointer-events: auto !important; box-sizing: border-box !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; line-height: normal !important; }
-        .veritai-check-btn:hover { background-color: rgba(37, 99, 235, 1); }
+        .veritai-check-btn:hover { 
+            background-color: rgba(37, 99, 235, 1); 
+            transform: scale(1.05); /* ✨ 마우스를 올리면 버튼이 5% 커짐 */
+        }
         .veritai-details-box { position: absolute; top: 0px; left: 0px; will-change: transform; z-index: 2147483647; background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(12px); color: #F8FAFC; padding: 16px; border-radius: 12px; font-size: 12px; white-space: normal; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; width: 280px; max-height: 400px; overflow-y: auto; text-align: left; cursor: default; pointer-events: auto; transition: box-shadow 0.3s ease; box-sizing: border-box; margin: 0; letter-spacing: normal; }
         .veritai-details-box.fake-border { border: 1px solid rgba(239, 68, 68, 0.5); }
         .veritai-details-box.real-border { border: 1px solid rgba(16, 185, 129, 0.5); }
         .veritai-details-box.pinned-fake { box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
         .veritai-details-box.pinned-real { box-shadow: 0 0 20px rgba(16, 185, 129, 0.4); }
         .veritai-details-box.unpinned { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); }
+        .veritai-details-box::-webkit-scrollbar { width: 6px; }
+        .veritai-details-box::-webkit-scrollbar-track { background: transparent; }
+        .veritai-details-box::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.4); border-radius: 4px; }
+        .veritai-details-box::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.7); }
+        animation: veritai-fade-in-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         @keyframes veritai-spin { to { transform: rotate(360deg); } }
     `;
     document.head.appendChild(style);
@@ -89,6 +101,13 @@ function isVisibleMedia(media) {
 
 function shouldInspectMedia(media) {
     if (media.closest('.veritai-details-box') || media.closest('.veritai-ui-container')) return false;
+    
+    const adSelector = '.adsbygoogle, [id^="google_ads"], [id*="banner"], [class*="banner"], [id*="sponsor"], [class*="sponsor"], [class*="ad-slot"], [class*="ad-container"]';
+    if (media.closest(adSelector)) return false;
+
+    const url = (media.src || media.currentSrc || "").toLowerCase();
+    if (url.includes('doubleclick.net') || url.includes('googlesyndication') || url.includes('/ads/')) return false;
+
     return isVisibleMedia(media);
 }
 
@@ -108,7 +127,9 @@ function getInspectionPriority(media) {
 function runWithInspectionLimit(task, media = null) {
     return new Promise((resolve, reject) => {
         pendingInspectionQueue.push({ task, media, resolve, reject });
-        pendingInspectionQueue.sort((a, b) => getInspectionPriority(b.media) - getInspectionPriority(a.media));
+        if (isAutoScanMode) {
+            pendingInspectionQueue.sort((a, b) => getInspectionPriority(b.media) - getInspectionPriority(a.media));
+        }
         drainInspectionQueue();
     });
 }
@@ -275,6 +296,14 @@ function updateStatusBadge(media, status, data = null) {
     else if (status === "error") {
         badge.innerText = data?.message || "분석 실패";
         badge.style.background = "rgba(100, 116, 139, 0.9)";
+        badge.style.cursor = "pointer";
+        
+        badge.onclick = (e) => {
+            e.stopPropagation();
+            if (uiContainer) uiContainer.remove();
+            delete media.dataset.veritaiScanned;
+            startInspection(media);
+        };
         setTimeout(() => { if (uiContainer && uiContainer.parentNode) uiContainer.remove(); }, 3000);
     }
     else if (status === "fake" || status === "real") {
@@ -551,10 +580,12 @@ ${faceText}
 
             updatePosition();
             window.addEventListener('resize', updatePosition);
+            window.addEventListener('scroll', updatePosition, true);
 
             let closeDetails;
             detailsBox.cleanupListeners = () => {
                 window.removeEventListener('resize', updatePosition);
+                window.removeEventListener('scroll', updatePosition, true);
                 window.removeEventListener('mousemove', onMouseMove);
                 window.removeEventListener('mouseup', onMouseUp);
                 if (closeDetails) document.removeEventListener('click', closeDetails);
@@ -628,8 +659,14 @@ ${faceText}
                                 })
                             });
                             if (!response.ok) throw new Error("전송 실패");
-                            reasonContainer.innerHTML = "<span style='color: lightgreen; font-size: 11px; text-align: right;'>피드백이 접수되었습니다!</span>";
-                            setTimeout(() => reasonContainer.remove(), 1500);
+                            reasonContainer.innerHTML = "<span style='color: lightgreen; font-size: 11px; text-align: right; padding-top: 5px;'>✓ 피드백이 성공적으로 접수되었습니다.</span>";
+                            setTimeout(() => {
+                                reasonContainer.remove();
+                                feedbackBtn.style.display = 'flex';
+                                feedbackBtn.style.opacity = '0.5'; 
+                                feedbackBtn.innerText = '✓ 신고 완료';
+                                feedbackBtn.disabled = true; 
+                            }, 1500);
                         } catch (err) {
                             submitBtn.innerText = "실패(재시도)";
                             submitBtn.disabled = false;
@@ -736,12 +773,23 @@ async function startInspection(media) {
 
     }, media).catch((err) => {
         if (!isSystemOn) return;
+
+        if (err.message.includes("CORS") || err.message.includes("보안 차단됨")) {
+            delete media.dataset.veritaiScanned;
+            delete media.dataset.veritaiScanKey;
+            const wrapper = ensureWrapper(media);
+            if (wrapper) {
+                const ui = wrapper.querySelector('.veritai-ui-container');
+                if (ui) ui.remove();
+            }
+            return; 
+        }
+
         let friendlyMessage = "분석 오류";
         if (err.status === 429) friendlyMessage = "요청 과다 (잠시 후 시도)";
         else if (err.status === 408) friendlyMessage = "응답 지연 (서버 혼잡)";
         else if (err.status >= 500) friendlyMessage = "서버 내부 오류";
         else if (err.name === 'TypeError' && err.message === 'Failed to fetch') friendlyMessage = "서버 연결 실패 (서버 꺼짐)";
-        else if (err.message.includes("CORS") || err.message.includes("보안 차단됨")) friendlyMessage = "보안 정책 차단";
         else if (err.status === 400 || err.status === 415) friendlyMessage = "지원하지 않는 이미지";
         else friendlyMessage = err.message || "분석 실패";
         
@@ -1053,11 +1101,14 @@ async function runBatchPollingLoop() {
 
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-        const detailsBox = document.querySelector('.veritai-details-box');
-        if (detailsBox) {
-            if (detailsBox.cleanupListeners) detailsBox.cleanupListeners();
-            detailsBox.remove();
-        }
+        document.querySelectorAll('.veritai-details-box').forEach(box => {
+            if (box.cleanupListeners) box.cleanupListeners();
+            box.remove();
+        });
+        
+        document.querySelectorAll('.veritai-status-badge[data-pinned="true"]').forEach(badge => {
+            badge.dataset.pinned = "false";
+        });
     }
 });
 
