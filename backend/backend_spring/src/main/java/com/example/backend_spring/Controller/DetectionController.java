@@ -9,10 +9,13 @@ import com.example.backend_spring.Repository.DetectionRequestRepository;
 import com.example.backend_spring.Repository.DetectionResultRepository;
 import com.example.backend_spring.Service.DetectionProcessingService;
 import com.example.backend_spring.Service.DetectionProcessingService.QueueFullException;
+import com.example.backend_spring.Service.DetectionStatus;
+import com.example.backend_spring.Service.DetectionUploadService;
+import com.example.backend_spring.Service.DetectionUploadService.InvalidUploadException;
+import com.example.backend_spring.Service.UploadedDetectionFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,19 +27,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
-import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api")
@@ -44,23 +39,22 @@ public class DetectionController {
 
     private static final Logger log = LoggerFactory.getLogger(DetectionController.class);
     private static final String RETRY_AFTER_SECONDS = "5";
-
     private final DetectionRequestRepository detectionRequestRepository;
     private final DetectionResultRepository detectionResultRepository;
     private final DetectionProcessingService detectionProcessingService;
+    private final DetectionUploadService detectionUploadService;
     private final ObjectMapper objectMapper;
     private final Object dedupLock = new Object();
-
-    @Value("${app.upload-dir}")
-    private String uploadDir;
 
     public DetectionController(DetectionRequestRepository detectionRequestRepository,
                                DetectionResultRepository detectionResultRepository,
                                DetectionProcessingService detectionProcessingService,
+                               DetectionUploadService detectionUploadService,
                                ObjectMapper objectMapper) {
         this.detectionRequestRepository = detectionRequestRepository;
         this.detectionResultRepository = detectionResultRepository;
         this.detectionProcessingService = detectionProcessingService;
+        this.detectionUploadService = detectionUploadService;
         this.objectMapper = objectMapper;
     }
 
@@ -75,41 +69,29 @@ public class DetectionController {
         DetectionRequestEntity requestEntity = new DetectionRequestEntity();
 
         try {
-            if (file.isEmpty()) {
-                return ResponseEntity.badRequest().body("Uploaded file is empty.");
-            }
-
-            byte[] bytes = file.getBytes();
-            String fileHash = sha256(bytes);
+            UploadedDetectionFile uploadedFile = detectionUploadService.storeValidated(file);
             String normalizedAnalysisMode = detectionProcessingService.normalizeAnalysisMode(analysisMode);
 
             synchronized (dedupLock) {
-                Optional<ResponseEntity<?>> reusableResponse = findReusableDetection(fileHash, normalizedAnalysisMode);
+                Optional<ResponseEntity<?>> reusableResponse = findReusableDetection(uploadedFile.fileHash(), normalizedAnalysisMode);
                 if (reusableResponse.isPresent()) {
+                    detectionUploadService.deleteQuietly(uploadedFile.path());
                     return reusableResponse.get();
                 }
-
-                Path uploadPath = Paths.get(uploadDir);
-                Files.createDirectories(uploadPath);
-
-                String originalFileName = sanitizeFileName(file.getOriginalFilename());
-                String savedFileName = UUID.randomUUID() + "_" + originalFileName;
-                Path savedPath = uploadPath.resolve(savedFileName);
-                Files.write(savedPath, bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
 
                 requestEntity.setSourceUrl(truncate(sourceUrl, 2000));
                 requestEntity.setMediaType(mediaType);
                 requestEntity.setClientType(clientType);
-                requestEntity.setFileName(originalFileName);
-                requestEntity.setFilePath(savedPath.toString());
-                requestEntity.setFileHash(fileHash);
-                requestEntity.setMimeType(file.getContentType());
-                requestEntity.setFileSize(file.getSize());
+                requestEntity.setFileName(uploadedFile.originalFileName());
+                requestEntity.setFilePath(uploadedFile.path().toString());
+                requestEntity.setFileHash(uploadedFile.fileHash());
+                requestEntity.setMimeType(uploadedFile.mimeType());
+                requestEntity.setFileSize(uploadedFile.fileSize());
                 requestEntity.setAnalysisMode(normalizedAnalysisMode);
-                requestEntity.setStatus(DetectionProcessingService.STATUS_QUEUED);
+                requestEntity.setStatus(DetectionStatus.QUEUED.value());
                 detectionRequestRepository.save(requestEntity);
 
-                detectionProcessingService.enqueue(requestEntity.getId(), savedPath, normalizedAnalysisMode);
+                detectionProcessingService.enqueue(requestEntity.getId(), uploadedFile.path(), normalizedAnalysisMode);
             }
 
             DetectionResponseDto responseDto = new DetectionResponseDto(
@@ -122,23 +104,22 @@ public class DetectionController {
 
             return ResponseEntity.accepted().body(responseDto);
 
+        } catch (InvalidUploadException e) {
+            return buildErrorResponse(HttpStatus.BAD_REQUEST, null, e.getMessage(), null);
+
         } catch (QueueFullException e) {
             requestEntity.setStatus(DetectionProcessingService.STATUS_FAILED);
             if (requestEntity.getId() != null) {
                 detectionRequestRepository.save(requestEntity);
             }
 
-            DetectionResponseDto errorDto = new DetectionResponseDto(
-                    requestEntity.getId(),
-                    DetectionProcessingService.STATUS_FAILED,
-                    "Detection queue is full. Please retry later.",
-                    null,
-                    detectionProcessingService.recommendedPollDelayMs()
-            );
-
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .header("Retry-After", RETRY_AFTER_SECONDS)
-                    .body(errorDto);
+                    .body(buildErrorDto(
+                            requestEntity.getId(),
+                            "Detection queue is full. Please retry later.",
+                            detectionProcessingService.recommendedPollDelayMs()
+                    ));
 
         } catch (Exception e) {
             requestEntity.setStatus(DetectionProcessingService.STATUS_FAILED);
@@ -146,28 +127,30 @@ public class DetectionController {
                 detectionRequestRepository.save(requestEntity);
             }
 
-            DetectionResponseDto errorDto = new DetectionResponseDto(
+            return buildErrorResponse(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
                     requestEntity.getId(),
-                    DetectionProcessingService.STATUS_FAILED,
                     "Analysis failed: " + e.getMessage(),
-                    null,
                     null
             );
-
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorDto);
         }
     }
 
     @GetMapping("/detections/status")
     public ResponseEntity<?> getDetectionStatuses(@RequestParam("ids") List<Long> requestIds) {
         List<DetectionResponseDto> items = new ArrayList<>();
+        Map<Long, DetectionRequestEntity> requestsById = new LinkedHashMap<>();
+        detectionRequestRepository.findAllById(requestIds).forEach(requestEntity ->
+                requestsById.put(requestEntity.getId(), requestEntity)
+        );
         for (Long requestId : requestIds) {
             if (requestId == null) {
                 continue;
             }
-            detectionRequestRepository.findById(requestId)
-                    .map(this::buildDetectionResponse)
-                    .ifPresent(items::add);
+            DetectionRequestEntity requestEntity = requestsById.get(requestId);
+            if (requestEntity != null) {
+                items.add(buildDetectionResponse(requestEntity));
+            }
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("items", items);
@@ -179,7 +162,7 @@ public class DetectionController {
     public ResponseEntity<?> getDetection(@PathVariable Long requestId) {
         Optional<DetectionRequestEntity> requestOpt = detectionRequestRepository.findById(requestId);
         if (requestOpt.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Request not found.");
+            return buildErrorResponse(HttpStatus.NOT_FOUND, requestId, "Request not found.", null);
         }
 
         return ResponseEntity.ok(buildDetectionResponse(requestOpt.get()));
@@ -240,23 +223,18 @@ public class DetectionController {
         return new DetectionResponseDto(
                 requestEntity.getId(),
                 requestEntity.getStatus(),
-                getStatusMessage(requestEntity.getStatus()),
+                getStatusMessage(requestEntity),
                 resultDto,
                 isPendingStatus(requestEntity.getStatus()) ? detectionProcessingService.recommendedPollDelayMs() : null
         );
     }
 
     private Optional<ResponseEntity<?>> findReusableDetection(String fileHash, String analysisMode) {
-        Set<String> reusableStatuses = Set.of(
-                DetectionProcessingService.STATUS_QUEUED,
-                DetectionProcessingService.STATUS_PROCESSING,
-                DetectionProcessingService.STATUS_DONE
-        );
         Optional<DetectionRequestEntity> existingOpt =
                 detectionRequestRepository.findFirstByFileHashAndAnalysisModeAndStatusInOrderByCreatedAtDesc(
                         fileHash,
                         analysisMode,
-                        reusableStatuses
+                        DetectionStatus.reusableValues()
                 );
         if (existingOpt.isEmpty()) {
             return Optional.empty();
@@ -292,8 +270,26 @@ public class DetectionController {
     }
 
     private boolean isPendingStatus(String status) {
-        return DetectionProcessingService.STATUS_QUEUED.equals(status)
-                || DetectionProcessingService.STATUS_PROCESSING.equals(status);
+        return DetectionStatus.from(status).map(DetectionStatus::isPending).orElse(false);
+    }
+
+    private ResponseEntity<DetectionResponseDto> buildErrorResponse(
+            HttpStatus status,
+            Long requestId,
+            String message,
+            Integer retryAfterMs
+    ) {
+        return ResponseEntity.status(status).body(buildErrorDto(requestId, message, retryAfterMs));
+    }
+
+    private DetectionResponseDto buildErrorDto(Long requestId, String message, Integer retryAfterMs) {
+        return new DetectionResponseDto(
+                requestId,
+                DetectionProcessingService.STATUS_FAILED,
+                message,
+                null,
+                retryAfterMs
+        );
     }
 
     private String truncate(String value, int maxLength) {
@@ -301,36 +297,20 @@ public class DetectionController {
         return value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
 
-    private String sanitizeFileName(String fileName) {
-        String fallback = "capture.jpg";
-        if (fileName == null || fileName.isBlank()) {
-            return fallback;
-        }
-
-        String normalized = Paths.get(fileName).getFileName().toString();
-        String sanitized = normalized.replaceAll("[^A-Za-z0-9._-]", "_");
-        return sanitized.isBlank() ? fallback : sanitized;
-    }
-
-    private String getStatusMessage(String status) {
-        if (DetectionProcessingService.STATUS_QUEUED.equals(status)) {
-            return "Analysis request is queued.";
-        }
-        if (DetectionProcessingService.STATUS_PROCESSING.equals(status)) {
-            return "Analysis is processing.";
-        }
-        if (DetectionProcessingService.STATUS_DONE.equals(status)) {
-            return "Analysis completed.";
-        }
-        if (DetectionProcessingService.STATUS_FAILED.equals(status)) {
-            return "Analysis failed.";
-        }
-        return "Analysis status loaded.";
-    }
-
-    private String sha256(byte[] bytes) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("SHA-256");
-        byte[] digest = md.digest(bytes);
-        return HexFormat.of().formatHex(digest);
+    private String getStatusMessage(DetectionRequestEntity requestEntity) {
+        String status = requestEntity.getStatus();
+        return DetectionStatus.from(status)
+                .map(detectionStatus -> switch (detectionStatus) {
+                    case QUEUED -> "Analysis request is queued.";
+                    case PROCESSING -> "Analysis is processing.";
+                    case DONE -> "Analysis completed.";
+                    case FAILED -> {
+                        if (requestEntity.getFailureMessage() != null && !requestEntity.getFailureMessage().isBlank()) {
+                            yield requestEntity.getFailureMessage();
+                        }
+                        yield "Analysis failed.";
+                    }
+                })
+                .orElse("Analysis status loaded.");
     }
 }

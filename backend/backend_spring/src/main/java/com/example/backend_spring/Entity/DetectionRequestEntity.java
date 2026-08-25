@@ -34,6 +34,9 @@ public class DetectionRequestEntity {
     private String status;
     private String analysisMode;
 
+    @Column(length = 1000)
+    private String failureMessage;
+
     private boolean isReported = false;
     private String reportedAt;
 
@@ -139,6 +142,14 @@ public class DetectionRequestEntity {
 
     public void setAnalysisMode(String analysisMode) {
         this.analysisMode = analysisMode;
+    }
+
+    public String getFailureMessage() {
+        return failureMessage;
+    }
+
+    public void setFailureMessage(String failureMessage) {
+        this.failureMessage = failureMessage;
     }
 
     public boolean isReported() {
