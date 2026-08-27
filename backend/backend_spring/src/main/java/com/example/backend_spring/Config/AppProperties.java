@@ -79,6 +79,8 @@ public class AppProperties {
         private long aiRetryDelayMs = 500;
         private long maxFileSizeBytes = 20L * 1024L * 1024L;
         private int maxRawResultJsonBytes = 2 * 1024 * 1024;
+        private int uploadRetentionDays = 7;
+        private long uploadCleanupIntervalMs = 60L * 60L * 1000L;
 
         public int getQueueCapacity() {
             return queueCapacity;
@@ -126,6 +128,22 @@ public class AppProperties {
 
         public void setMaxRawResultJsonBytes(int maxRawResultJsonBytes) {
             this.maxRawResultJsonBytes = maxRawResultJsonBytes;
+        }
+
+        public int getUploadRetentionDays() {
+            return uploadRetentionDays;
+        }
+
+        public void setUploadRetentionDays(int uploadRetentionDays) {
+            this.uploadRetentionDays = uploadRetentionDays;
+        }
+
+        public long getUploadCleanupIntervalMs() {
+            return uploadCleanupIntervalMs;
+        }
+
+        public void setUploadCleanupIntervalMs(long uploadCleanupIntervalMs) {
+            this.uploadCleanupIntervalMs = uploadCleanupIntervalMs;
         }
     }
 }

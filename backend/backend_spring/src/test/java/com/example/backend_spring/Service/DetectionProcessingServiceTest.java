@@ -24,6 +24,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -69,9 +70,21 @@ class DetectionProcessingServiceTest {
         aiResult.setProcessingTimeMs(321);
         aiResult.setMessage("face crop only: detected 2 face(s).");
 
-        when(requestRepository.findByStatusIn(any())).thenReturn(List.of());
+        when(requestRepository.findByStatusInOrderByCreatedAtAsc(any())).thenReturn(List.of());
         when(requestRepository.findById(7L)).thenReturn(Optional.of(request));
         when(resultRepository.findByRequestId(7L)).thenReturn(Optional.empty());
+        when(requestRepository.transitionStatus(
+                eq(7L),
+                eq(DetectionProcessingService.STATUS_PROCESSING),
+                isNull(),
+                any()
+        )).thenReturn(1);
+        when(requestRepository.transitionStatus(
+                eq(7L),
+                eq(DetectionProcessingService.STATUS_DONE),
+                isNull(),
+                any()
+        )).thenReturn(1);
         when(restTemplate.exchange(
                 eq("http://localhost:8000/predict"),
                 eq(HttpMethod.POST),
@@ -94,7 +107,12 @@ class DetectionProcessingServiceTest {
             assertThat(saved.getProcessingTimeMs()).isEqualTo(321);
             assertThat(saved.getRawResultJson()).contains("\"isDeepfake\":true");
 
-            verify(requestRepository, timeout(3000).atLeastOnce()).save(request);
+            verify(requestRepository, timeout(3000)).transitionStatus(
+                    eq(7L),
+                    eq(DetectionProcessingService.STATUS_DONE),
+                    isNull(),
+                    any()
+            );
             assertThat(request.getStatus()).isEqualTo(DetectionProcessingService.STATUS_DONE);
         } finally {
             service.stopWorkers();
@@ -126,9 +144,21 @@ class DetectionProcessingServiceTest {
         request.setAnalysisMode("face_crop_only");
         request.setStatus(DetectionProcessingService.STATUS_QUEUED);
 
-        when(requestRepository.findByStatusIn(any())).thenReturn(List.of());
+        when(requestRepository.findByStatusInOrderByCreatedAtAsc(any())).thenReturn(List.of());
         when(requestRepository.findById(8L)).thenReturn(Optional.of(request));
         when(resultRepository.findByRequestId(8L)).thenReturn(Optional.empty());
+        when(requestRepository.transitionStatus(
+                eq(8L),
+                eq(DetectionProcessingService.STATUS_PROCESSING),
+                isNull(),
+                any()
+        )).thenReturn(1);
+        when(requestRepository.transitionStatus(
+                eq(8L),
+                eq(DetectionProcessingService.STATUS_FAILED),
+                any(),
+                any()
+        )).thenReturn(1);
         when(restTemplate.exchange(
                 eq("http://localhost:8000/predict"),
                 eq(HttpMethod.POST),
@@ -140,10 +170,60 @@ class DetectionProcessingServiceTest {
         try {
             service.enqueue(8L, imagePath, "face_crop_only");
 
-            verify(requestRepository, timeout(3000).atLeast(2)).save(request);
+            verify(requestRepository, timeout(3000)).transitionStatus(
+                    eq(8L),
+                    eq(DetectionProcessingService.STATUS_FAILED),
+                    any(),
+                    any()
+            );
             assertThat(request.getStatus()).isEqualTo(DetectionProcessingService.STATUS_FAILED);
             assertThat(request.getFailureMessage()).contains("AI server connection or timeout failure");
             assertThat(request.getFailureMessage()).contains("Read timed out");
+            verify(resultRepository, never()).save(any());
+        } finally {
+            service.stopWorkers();
+        }
+    }
+
+    @Test
+    void workerSkipsAiCallWhenQueuedRequestWasAlreadyClaimed() throws Exception {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        DetectionRequestRepository requestRepository = mock(DetectionRequestRepository.class);
+        DetectionResultRepository resultRepository = mock(DetectionResultRepository.class);
+        DetectionProcessingService service = new DetectionProcessingService(
+                restTemplate,
+                requestRepository,
+                resultRepository,
+                new ObjectMapper(),
+                serviceProperties()
+        );
+
+        Path imagePath = tempDir.resolve("already-claimed.png");
+        Files.write(imagePath, new byte[] {
+                (byte) 0x89, 0x50, 0x4E, 0x47,
+                0x0D, 0x0A, 0x1A, 0x0A
+        });
+
+        when(requestRepository.findByStatusInOrderByCreatedAtAsc(any())).thenReturn(List.of());
+        when(requestRepository.transitionStatus(
+                eq(9L),
+                eq(DetectionProcessingService.STATUS_PROCESSING),
+                isNull(),
+                any()
+        )).thenReturn(0);
+        when(resultRepository.findByRequestId(9L)).thenReturn(Optional.empty());
+
+        service.startWorkers();
+        try {
+            service.enqueue(9L, imagePath, "face_crop_only");
+
+            verify(requestRepository, timeout(3000)).transitionStatus(
+                    eq(9L),
+                    eq(DetectionProcessingService.STATUS_PROCESSING),
+                    isNull(),
+                    any()
+            );
+            verify(restTemplate, never()).exchange(any(), any(), any(), eq(AiPredictionDto.class));
             verify(resultRepository, never()).save(any());
         } finally {
             service.stopWorkers();
