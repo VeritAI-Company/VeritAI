@@ -46,3 +46,13 @@ document.getElementById('feedback-link').addEventListener('click', () => {
     const feedbackUrl = "https://forms.gle/실제_주소"; 
     chrome.tabs.create({ url: feedbackUrl });
 });
+
+document.getElementById('clear-cache-btn').addEventListener('click', () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.tabs.sendMessage(tabs[0].id, { action: "clear_cache_and_rescan" }, (response) => {
+            if (response && response.success) {
+                alert("결과 캐시가 삭제되고 화면을 재검사합니다.");
+            }
+        });
+    });
+});
