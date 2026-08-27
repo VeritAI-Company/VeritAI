@@ -33,7 +33,7 @@ function injectCSS() {
         .veritai-status-badge { padding: 4px 8px; border-radius: 4px; color: white; font-size: 11px; font-weight: bold; font-family: sans-serif; box-shadow: 0 2px 4px rgba(0,0,0,0.5); transition: all 0.2s ease; user-select: none; cursor: default; pointer-events: auto !important; box-sizing: border-box !important; line-height: normal !important; }
         .veritai-check-btn { position: absolute; top: 8px; left: 8px; z-index: 2147483647; padding: 4px 10px; background-color: rgba(59, 130, 246, 0.9); color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 11px; backdrop-filter: blur(4px); transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.2); pointer-events: auto !important; box-sizing: border-box !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important; line-height: normal !important; }
         .veritai-check-btn:hover { background-color: rgba(37, 99, 235, 1); transform: scale(1.05); }
-        .veritai-details-box { position: fixed; top: 0px; left: 0px; will-change: transform; z-index: 2147483647; background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(12px); color: #F8FAFC; padding: 16px; border-radius: 12px; font-size: 12px; white-space: normal; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; width: 280px; max-height: 400px; overflow-y: auto; text-align: left; cursor: default; pointer-events: auto; transition: box-shadow 0.3s ease; box-sizing: border-box; margin: 0; letter-spacing: normal; animation: veritai-fade-in-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .veritai-details-box { position: absolute; top: 0px; left: 0px; will-change: transform; z-index: 2147483647; background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(12px); color: #F8FAFC; padding: 16px; border-radius: 12px; font-size: 12px; white-space: normal; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; width: 280px; max-height: 400px; overflow-y: auto; text-align: left; cursor: default; pointer-events: auto; transition: box-shadow 0.3s ease; box-sizing: border-box; margin: 0; letter-spacing: normal; animation: veritai-fade-in-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
         .veritai-details-box.fake-border { border: 1px solid rgba(239, 68, 68, 0.5); }
         .veritai-details-box.real-border { border: 1px solid rgba(16, 185, 129, 0.5); }
         .veritai-details-box.pinned-fake { box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
@@ -416,6 +416,7 @@ function updateStatusBadge(media, status, data = null) {
         <canvas id="veritai-heatmap-canvas" style="display: none; position: absolute; max-width: 100%; max-height: 100%; object-fit: contain; z-index: 1;"></canvas>
     </div>
     <div id="veritai-slider-container" style="display: none; margin-top: 8px; align-items: center; gap: 8px;">
+        <button id="veritai-heatmap-eye-btn" title="원본/히트맵 끄기 켜기" style="background: none; border: none; cursor: pointer; padding: 0; font-size: 16px; transition: opacity 0.2s;">👁️</button>
         <span style="font-size: 10px; color: #64748b;">원본</span>
         <input type="range" id="veritai-heatmap-slider" min="0" max="100" value="70" style="flex: 1; accent-color: #ef4444; cursor: pointer;">
         <span style="font-size: 10px; color: #ef4444;">히트맵</span>
@@ -451,18 +452,21 @@ ${faceText}
                 const bCtx = bboxCanvas.getContext('2d');
                 const hCtx = heatmapCanvas.getContext('2d');
                 const imgObj = new Image();
+                
                 imgObj.crossOrigin = "anonymous";
                 imgObj.onerror = () => {
                     imgObj.removeAttribute("crossOrigin");
-                    imgObj.onerror = null; 
+                    imgObj.onerror = null;
                     imgObj.src = targetMediaSrc; 
                 };
+
                 imgObj.onload = () => {
                     bboxCanvas.width = imgObj.width;
                     bboxCanvas.height = imgObj.height;
                     heatmapCanvas.width = imgObj.width;
                     heatmapCanvas.height = imgObj.height;
                     bCtx.drawImage(imgObj, 0, 0);
+                    
                     if (faces && faces.length > 0) {
                         faces.forEach((f, i) => {
                             if (f.bbox && f.bbox.w > 0) {
@@ -479,6 +483,61 @@ ${faceText}
                         });
                     }
 
+                    if (result.heatmapBase64) {
+                        let bestFace = faces && faces.length > 0 ? faces[0] : null;
+                        let maxScore = -1;
+                        if (faces) {
+                            faces.forEach(f => {
+                                const score = f.fakeProbability || f.confidence || (f.detectionConfidence || 0);
+                                if (score > maxScore) { maxScore = score; bestFace = f; }
+                            });
+                        }
+                        const hmImg = new Image();
+                        hmImg.onload = () => {
+                            const drawHeatmap = (opacity) => {
+                                hCtx.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
+                                hCtx.drawImage(imgObj, 0, 0); 
+                                hCtx.globalAlpha = opacity;
+                                hCtx.globalCompositeOperation = "screen"; 
+                                if (bestFace && bestFace.bbox) {
+                                    hCtx.drawImage(hmImg, bestFace.bbox.x, bestFace.bbox.y, bestFace.bbox.w, bestFace.bbox.h);
+                                } else {
+                                    hCtx.drawImage(hmImg, 0, 0, imgObj.width, imgObj.height);
+                                }
+                                hCtx.globalAlpha = 1.0;
+                                hCtx.globalCompositeOperation = "source-over";
+                            };
+                            
+                            let isOriginalView = false;
+                            const eyeBtn = detailsBox.querySelector('#veritai-heatmap-eye-btn');
+
+                            drawHeatmap(slider.value / 100);
+                            
+                            if (slider) {
+                                slider.addEventListener('input', (e) => {
+                                    isOriginalView = false;
+                                    if(eyeBtn) eyeBtn.style.opacity = "1";
+                                    drawHeatmap(e.target.value / 100);
+                                });
+                            }
+
+                            if (eyeBtn) {
+                                eyeBtn.addEventListener('click', (e) => {
+                                    e.stopPropagation();
+                                    isOriginalView = !isOriginalView;
+                                    
+                                    if (isOriginalView) {
+                                        eyeBtn.style.opacity = "0.3"; 
+                                        drawHeatmap(0);
+                                    } else {
+                                        eyeBtn.style.opacity = "1";   
+                                        drawHeatmap(slider.value / 100);
+                                    }
+                                });
+                            }
+                        };
+                        hmImg.src = "data:image/jpeg;base64," + result.heatmapBase64;
+                    }
                 };
                 imgObj.src = targetMediaSrc;
             }
@@ -521,12 +580,12 @@ ${faceText}
                 dragHandle.style.cursor = 'grabbing';
                 const rect = detailsBox.getBoundingClientRect();
                 detailsBox.style.transform = 'none'; 
-                detailsBox.style.left = rect.left + 'px'; 
-                detailsBox.style.top = rect.top + 'px';
+                detailsBox.style.left = (rect.left + window.scrollX) + 'px'; 
+                detailsBox.style.top = (rect.top + window.scrollY) + 'px';
                 startX = e.clientX;
                 startY = e.clientY;
-                initialLeft = rect.left;
-                initialTop = rect.top;
+                initialLeft = rect.left + window.scrollX;
+                initialTop = rect.top + window.scrollY;
                 e.preventDefault();
             });
 
@@ -555,8 +614,8 @@ ${faceText}
                 
                 const badgeRect = badge.getBoundingClientRect();
 
-                let leftPos = badgeRect.right + 10;
-                let topPos = badgeRect.bottom + 5;
+                let leftPos = badgeRect.right + 10 + window.scrollX;
+                let topPos = badgeRect.bottom + 5 + window.scrollY;
                 
                 detailsBox.style.transform = 'none'; 
                 detailsBox.style.left = leftPos + 'px';
@@ -1134,3 +1193,16 @@ document.addEventListener('click', (e) => {
         }
     }
 }, true);
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "clear_cache_and_rescan") {
+        scanCache.clear();      
+        scannedMediaKeys.clear(); 
+        clearAllUI();            
+        
+        document.querySelectorAll('img, video').forEach(media => attachUI(media));
+        
+        sendResponse({ success: true });
+    }
+    return true;
+});
