@@ -9,6 +9,7 @@ const MAX_CONCURRENT_INSPECTIONS = (navigator.hardwareConcurrency || 4) <= 4 ? 2
 
 let isSystemOn = true;
 let isAutoScanMode = false;
+let isCleanUIMode = false; 
 const FACE_CROP_ANALYSIS_MODE = "face_crop_only";
 const scannedMediaKeys = new Set();
 let activeInspectionCount = 0;
@@ -36,8 +37,6 @@ function injectCSS() {
         .veritai-details-box { position: absolute; top: 0px; left: 0px; will-change: transform; z-index: 2147483647; background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(12px); color: #F8FAFC; padding: 16px; border-radius: 12px; font-size: 12px; white-space: normal; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; width: 280px; max-height: 400px; overflow-y: auto; text-align: left; cursor: default; pointer-events: auto; transition: box-shadow 0.3s ease; box-sizing: border-box; margin: 0; letter-spacing: normal; animation: veritai-fade-in-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
         .veritai-details-box.fake-border { border: 1px solid rgba(239, 68, 68, 0.5); }
         .veritai-details-box.real-border { border: 1px solid rgba(16, 185, 129, 0.5); }
-        .veritai-details-box.pinned-fake { box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
-        .veritai-details-box.pinned-real { box-shadow: 0 0 20px rgba(16, 185, 129, 0.4); }
         .veritai-details-box.unpinned { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); }
         .veritai-details-box::-webkit-scrollbar { width: 6px; }
         .veritai-details-box::-webkit-scrollbar-track { background: transparent; }
@@ -49,7 +48,6 @@ function injectCSS() {
 }
 injectCSS();
 
-// XSS 보안 방어 함수
 function escapeHTML(str) {
     if (typeof str !== 'string') return str;
     return str.replace(/[&<>'"]/g, tag => ({
@@ -57,7 +55,6 @@ function escapeHTML(str) {
     }[tag]));
 }
 
-// LRU 캐시 구현
 function getFromCache(key) {
     if (!scanCache.has(key)) return null;
     const value = scanCache.get(key);
@@ -99,13 +96,10 @@ function isVisibleMedia(media) {
 function shouldInspectMedia(media) {
     if (media.closest('.veritai-details-box') || media.closest('.veritai-ui-container')) return false;
     if (window !== window.top) return false;
-
     if (media.closest(GLOBAL_AD_SELECTOR)) return false;
-
     const url = (media.src || media.currentSrc || "").toLowerCase();
     const adUrls = ['/ads/', '/ad/', 'doubleclick.net', 'googlesyndication', 'adservice', 'adsystem'];
     if (adUrls.some(ad => url.includes(ad))) return false;
-
     return isVisibleMedia(media);
 }
 
@@ -276,7 +270,6 @@ function updateStatusBadge(media, status, data = null) {
     badge.onclick = null;
     badge.onmouseenter = null;
     badge.onmouseleave = null;
-    badge.dataset.pinned = "false";
     media.style.border = "none";
 
     if (status === "loading") {
@@ -292,7 +285,7 @@ function updateStatusBadge(media, status, data = null) {
         badge.style.background = "rgba(100, 116, 139, 0.9)"; 
     }
     else if (status === "error") {
-        badge.innerText = data?.message || "분석 실패";
+        badge.innerHTML = `${data?.message || "분석 실패"} <span style="margin-left: 4px; font-size: 12px; cursor:pointer;">🔄 재시도</span>`;
         badge.style.background = "rgba(100, 116, 139, 0.9)";
         badge.style.cursor = "pointer";
         
@@ -302,11 +295,9 @@ function updateStatusBadge(media, status, data = null) {
             delete media.dataset.veritaiScanned;
             startInspection(media);
         };
-        setTimeout(() => { if (uiContainer && uiContainer.parentNode) uiContainer.remove(); }, 3000);
     }
     else if (status === "fake" || status === "real") {
         badge.style.cursor = "pointer";
-
         const targetMediaSrc = media.currentSrc || media.src || "unknown_media";
 
         if (status === "fake") {
@@ -325,11 +316,20 @@ function updateStatusBadge(media, status, data = null) {
             badge.style.justifyContent = "center";
             badge.style.alignItems = "center";
             badge.style.padding = "0";
-            badge.style.opacity = "0.85";
             
             media.style.transition = "box-shadow 1s ease-out"; 
             media.style.boxShadow = "0 0 15px 3px rgba(16, 185, 129, 0.6)"; 
             setTimeout(() => { if(media.isConnected) media.style.boxShadow = "none"; }, 1500);
+
+            if (isCleanUIMode) {
+                setTimeout(() => {
+                    if (uiContainer && uiContainer.parentNode) {
+                        uiContainer.style.transition = "opacity 0.5s ease-out";
+                        uiContainer.style.opacity = "0";
+                        setTimeout(() => { if (uiContainer.parentNode) uiContainer.remove(); }, 500);
+                    }
+                }, 2500);
+            }
         }
 
         const showReportBox = (e) => {
@@ -337,44 +337,25 @@ function updateStatusBadge(media, status, data = null) {
             
             let existingBox = null;
             document.querySelectorAll('.veritai-details-box').forEach(box => {
-                if (box.dataset.targetMedia === targetMediaSrc) existingBox = box;
+                if (box.dataset.targetMedia === targetMediaSrc) {
+                    existingBox = box;
+                }
             });
 
-            if (e && e.type === "click") {
-                if (badge.dataset.pinned === "true") {
-                    badge.dataset.pinned = "false";
-                    if (existingBox) {
-                        if (existingBox.cleanupListeners) existingBox.cleanupListeners();
-                        existingBox.remove();
-                    }
-                    return;
-                } else {
-                    badge.dataset.pinned = "true";
-                    if (existingBox) {
-                        existingBox.classList.remove('unpinned');
-                        existingBox.classList.add(status === "fake" ? "pinned-fake" : "pinned-real");
-                        const titleSpan = existingBox.querySelector('.veritai-drag-handle span');
-                        if(titleSpan) titleSpan.innerText = "🔍 분석 리포트 📌";
-                        return; 
-                    }
+            if (existingBox) return; 
+
+            document.querySelectorAll('.veritai-details-box').forEach(box => {
+                if (box.dataset.isDragged !== "true" && box.dataset.isFeedbackActive !== "true") {
+                    if (box.cleanupListeners) box.cleanupListeners();
+                    box.remove();
                 }
-            } else { 
-                if (badge.dataset.pinned === "true") return; 
-                if (existingBox) return; 
-                
-                document.querySelectorAll('.veritai-details-box.unpinned').forEach(box => {
-                    if (box.dataset.targetMedia !== targetMediaSrc) {
-                        if (box.cleanupListeners) box.cleanupListeners();
-                        box.remove();
-                    }
-                });
-            }
+            });
 
             const result = data.result;
             const faces = result.faces || [];
 
             const faceText = faces.length === 0 ?
-                "<div style='text-align:center; color:#94a3b8; padding: 10px 0;'>검출된 얼굴 없음</div>" :
+                "<div style='text-align:center; color:#94a3b8; padding: 10px 0; font-size: 11px;'>전체 이미지 분석 완료</div>" :
                 faces.slice(0, 3).map((f, i) => {
                     const bbox = f.bbox || {};
                     const quality = f.quality || {};
@@ -392,12 +373,13 @@ function updateStatusBadge(media, status, data = null) {
                 }).join("");
 
             const detailsBox = document.createElement('div');
-            detailsBox.className = `veritai-details-box ${status === "fake" ? "fake-border" : "real-border"} ${badge.dataset.pinned === "true" ? (status === "fake" ? "pinned-fake" : "pinned-real") : "unpinned"}`;
+            detailsBox.className = `veritai-details-box unpinned ${status === "fake" ? "fake-border" : "real-border"}`;
             detailsBox.dataset.targetMedia = targetMediaSrc;
+            detailsBox.dataset.isFeedbackActive = "false"; 
 
             detailsBox.innerHTML = `
 <div class="veritai-drag-handle" style="color:lightskyblue; font-weight:bold; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px; font-size:14px; display:flex; justify-content:space-between; align-items: center; cursor: grab; user-select: none;">
-    <span>🔍 분석 리포트 ${badge.dataset.pinned === "true" ? "📌" : ""}</span>
+    <span><span style="opacity: 0.4; margin-right: 6px; font-size: 12px; cursor: grab;">⋮⋮</span>🔍 분석 리포트</span>
     <span class="veritai-close-btn" style="cursor:pointer; color:#94a3b8; padding: 0 5px; font-size: 16px;">✕</span>
 </div>
 <div style="display: flex; flex-direction: column; gap: 6px;">
@@ -408,7 +390,7 @@ function updateStatusBadge(media, status, data = null) {
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
         <div style="font-weight: bold; font-size: 11px; color: #94a3b8;" id="veritai-visual-title">감지 영역 (기본)</div>
         <button id="veritai-toggle-xai-btn" style="font-size: 10px; padding: 2px 6px; background: #3b82f6; color: white; border: none; border-radius: 3px; cursor: pointer;" ${!result.heatmapBase64 ? 'disabled' : ''}>
-            ${result.heatmapBase64 ? 'AI 분석 근거 보기' : '히트맵 데이터 없음'}
+            ${result.heatmapBase64 ? 'AI 분석 근거 보기' : '정상 (조작 특이점 없음)'}
         </button>
     </div>
     <div style="position: relative; width: 100%; height: 160px; background: #0f172a; border-radius: 4px; overflow: hidden; border: 1px solid #333; display: flex; align-items: center; justify-content: center;">
@@ -432,14 +414,12 @@ ${faceText}
             detailsBox.onmouseenter = () => { detailsBox.dataset.isHovered = "true"; };
             detailsBox.onmouseleave = () => {
                 detailsBox.dataset.isHovered = "false";
-                if (status === "real" && badge.dataset.pinned !== "true") {
-                    setTimeout(() => {
-                        if (detailsBox.dataset.isHovered !== "true" && badge.dataset.isHovered !== "true") {
-                            badge.dataset.pinned = "false";
-                            detailsBox.remove();
-                        }
-                    }, 100);
-                }
+                setTimeout(() => {
+                    if (detailsBox.dataset.isHovered !== "true" && badge.dataset.isHovered !== "true" && detailsBox.dataset.isDragged !== "true" && detailsBox.dataset.isFeedbackActive !== "true") {
+                        if (detailsBox.cleanupListeners) detailsBox.cleanupListeners();
+                        detailsBox.remove();
+                    }
+                }, 100);
             };
 
             document.body.appendChild(detailsBox);
@@ -593,7 +573,6 @@ ${faceText}
                 if (!isDragging) return;
                 const dx = e.clientX - startX;
                 const dy = e.clientY - startY;
-                
                 detailsBox.style.left = (initialLeft + dx) + 'px';
                 detailsBox.style.top = (initialTop + dy) + 'px';
             };
@@ -613,7 +592,6 @@ ${faceText}
                 if (detailsBox.dataset.isDragged === "true") return;
                 
                 const badgeRect = badge.getBoundingClientRect();
-
                 let leftPos = badgeRect.right + 10 + window.scrollX;
                 let topPos = badgeRect.bottom + 5 + window.scrollY;
                 
@@ -632,8 +610,8 @@ ${faceText}
 
             const closeOnScroll = (evt) => {
                 if (detailsBox.contains(evt.target)) return;
-                if (badge.dataset.pinned !== "true") {
-                    detailsBox.cleanupListeners();
+                if (detailsBox.dataset.isDragged !== "true" && detailsBox.dataset.isFeedbackActive !== "true") {
+                    if (detailsBox.cleanupListeners) detailsBox.cleanupListeners();
                     detailsBox.remove();
                 }
             };
@@ -651,10 +629,8 @@ ${faceText}
             const closeBtn = detailsBox.querySelector('.veritai-close-btn');
             if (closeBtn) {
                 closeBtn.addEventListener('click', (evt) => {
-                    evt.preventDefault();
-                    evt.stopImmediatePropagation();
-                    badge.dataset.pinned = "false";
-                    detailsBox.cleanupListeners();
+                    evt.preventDefault(); evt.stopImmediatePropagation();
+                    if (detailsBox.cleanupListeners) detailsBox.cleanupListeners();
                     detailsBox.remove();
                 });
             }
@@ -664,6 +640,9 @@ ${faceText}
                 feedbackBtn.onclick = (e) => {
                     e.stopPropagation();
                     if (feedbackBtn.disabled) return;
+                    
+                    detailsBox.dataset.isFeedbackActive = "true";
+                    
                     feedbackBtn.style.display = 'none';
 
                     const reasonContainer = document.createElement('div');
@@ -686,11 +665,13 @@ ${faceText}
                     reasonContainer.appendChild(reasonInput);
                     reasonContainer.appendChild(actionContainer);
                     feedbackBtn.parentNode.appendChild(reasonContainer);
+                    setTimeout(() => reasonInput.focus(), 50);
 
                     cancelBtn.onclick = (cancelEvent) => {
                         cancelEvent.stopPropagation();
                         reasonContainer.remove();
                         feedbackBtn.style.display = 'flex';
+                        detailsBox.dataset.isFeedbackActive = "false";
                     };
 
                     submitBtn.onclick = async (submitEvent) => {
@@ -723,6 +704,7 @@ ${faceText}
                                 feedbackBtn.style.opacity = '0.5'; 
                                 feedbackBtn.innerText = '✓ 신고 완료';
                                 feedbackBtn.disabled = true; 
+                                detailsBox.dataset.isFeedbackActive = "false";
                             }, 1500);
                         } catch (err) {
                             submitBtn.innerText = "실패(재시도)";
@@ -735,41 +717,47 @@ ${faceText}
 
             setTimeout(() => {
                 closeDetails = (evt) => {
-                    if (badge.dataset.pinned !== "true" && !detailsBox.contains(evt.target) && !badge.contains(evt.target)) {
-                        detailsBox.cleanupListeners();
-                        detailsBox.remove();
+                    if (!detailsBox.contains(evt.target) && !badge.contains(evt.target)) {
+                        if (detailsBox.dataset.isDragged !== "true" && detailsBox.dataset.isFeedbackActive !== "true") {
+                            if (detailsBox.cleanupListeners) detailsBox.cleanupListeners();
+                            detailsBox.remove();
+                        }
                     }
                 };
                 document.addEventListener('click', closeDetails);
             }, 10);
         };
 
-        badge.onclick = (e) => showReportBox(e);
-
-        if (status === "real") {
-            badge.onmouseenter = (e) => {
-                badge.style.opacity = "1";
-                badge.dataset.isHovered = "true";
-                showReportBox(e);
-            };
-            badge.onmouseleave = () => {
-                badge.dataset.isHovered = "false";
-                if (badge.dataset.pinned !== "true") {
-                    badge.style.opacity = "0.85";
-                    setTimeout(() => {
-                        let existingBox = null;
-                        document.querySelectorAll('.veritai-details-box').forEach(box => {
-                            if (box.dataset.targetMedia === targetMediaSrc) existingBox = box; 
-                        });
-                        
-                        if (existingBox && existingBox.dataset.isHovered !== "true" && badge.dataset.isHovered !== "true" && badge.dataset.pinned !== "true") {
-                            if (existingBox.cleanupListeners) existingBox.cleanupListeners();
-                            existingBox.remove();
-                        }
-                    }, 100);
+        badge.onmouseenter = (e) => {
+            badge.style.opacity = "1";
+            badge.dataset.isHovered = "true";
+            showReportBox(e);
+        };
+        
+        badge.onmouseleave = () => {
+            badge.dataset.isHovered = "false";
+            setTimeout(() => {
+                let existingBox = null;
+                document.querySelectorAll('.veritai-details-box').forEach(box => {
+                    if (box.dataset.targetMedia === targetMediaSrc) existingBox = box; 
+                });
+                
+                if (existingBox && existingBox.dataset.isHovered !== "true" && badge.dataset.isHovered !== "true" && existingBox.dataset.isDragged !== "true" && existingBox.dataset.isFeedbackActive !== "true") {
+                    if (existingBox.cleanupListeners) existingBox.cleanupListeners();
+                    existingBox.remove();
                 }
-            };
-        }
+
+                if (isCleanUIMode && status === "real" && !existingBox && badge.dataset.isHovered !== "true") {
+                    if (uiContainer && uiContainer.parentNode) {
+                        uiContainer.style.transition = "opacity 0.5s ease-out";
+                        uiContainer.style.opacity = "0";
+                        setTimeout(() => { if (uiContainer && uiContainer.parentNode) uiContainer.remove(); }, 500);
+                    }
+                }
+            }, 100);
+        };
+
+        badge.onclick = (e) => { e.preventDefault(); e.stopPropagation(); };
     }
 }
 
@@ -865,10 +853,6 @@ async function startInspection(media) {
             scannedMediaKeys.delete(media.dataset.veritaiScanKey);
             delete media.dataset.veritaiScanKey;
         }
-        setTimeout(() => {
-            delete media.dataset.veritaiAttached;
-            attachUI(media);
-        }, 3000);
     });
 }
 
@@ -1013,9 +997,10 @@ function clearAllUI() {
     });
 }
 
-chrome.storage.local.get(['isSystemOn', 'isAutoScanOn'], (result) => {
+chrome.storage.local.get(['isSystemOn', 'isAutoScanOn', 'isCleanUIMode'], (result) => {
     isSystemOn = result.isSystemOn !== false;
     isAutoScanMode = result.isAutoScanOn || false;
+    isCleanUIMode = result.isCleanUIMode || false;
     setTimeout(() => {
         if (isSystemOn) {
             document.querySelectorAll('img, video').forEach(media => attachUI(media));
@@ -1028,6 +1013,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local') {
         let modeChanged = false;
         if (changes.isSystemOn) isSystemOn = changes.isSystemOn.newValue;
+        if (changes.isCleanUIMode) isCleanUIMode = changes.isCleanUIMode.newValue;
         if (changes.isAutoScanOn) {
             isAutoScanMode = changes.isAutoScanOn.newValue;
             modeChanged = true;
@@ -1171,10 +1157,6 @@ document.addEventListener('keydown', (e) => {
             if (box.cleanupListeners) box.cleanupListeners();
             box.remove();
         });
-        
-        document.querySelectorAll('.veritai-status-badge[data-pinned="true"]').forEach(badge => {
-            badge.dataset.pinned = "false";
-        });
     }
 });
 
@@ -1199,9 +1181,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         scanCache.clear();      
         scannedMediaKeys.clear(); 
         clearAllUI();            
-        
         document.querySelectorAll('img, video').forEach(media => attachUI(media));
-        
         sendResponse({ success: true });
     }
     return true;
