@@ -11,6 +11,7 @@ public class DetectionResultEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(nullable = false, unique = true)
     private Long requestId;
     private boolean isDeepfake;
     private double confidence;

@@ -125,19 +125,35 @@ public class DetectionProcessingService {
         long processingStarted = System.currentTimeMillis();
         activeProcessingCount.incrementAndGet();
         try {
+            if (!claimQueuedRequest(job.requestId())) {
+                if (detectionResultRepository.findByRequestId(job.requestId()).isPresent()) {
+                    transitionStatus(
+                            job.requestId(),
+                            DetectionStatus.DONE,
+                            null,
+                            DetectionStatus.pendingValues()
+                    );
+                }
+                return;
+            }
+
             DetectionRequestEntity requestEntity = detectionRequestRepository.findById(job.requestId())
                     .orElseThrow(() -> new IllegalStateException("Detection request not found: " + job.requestId()));
 
             if (detectionResultRepository.findByRequestId(job.requestId()).isPresent()) {
                 requestEntity.setStatus(DetectionStatus.DONE.value());
-                detectionRequestRepository.save(requestEntity);
+                transitionStatus(
+                        job.requestId(),
+                        DetectionStatus.DONE,
+                        null,
+                        Set.of(DetectionStatus.PROCESSING.value())
+                );
                 totalCompletedCount.incrementAndGet();
                 return;
             }
 
             requestEntity.setStatus(DetectionStatus.PROCESSING.value());
             requestEntity.setFailureMessage(null);
-            detectionRequestRepository.save(requestEntity);
 
             AiPredictionDto aiResult = callAiServerWithRetry(Paths.get(job.filePath()), job.analysisMode());
 
@@ -154,19 +170,35 @@ public class DetectionProcessingService {
             detectionResultRepository.save(resultEntity);
 
             requestEntity.setStatus(DetectionStatus.DONE.value());
-            detectionRequestRepository.save(requestEntity);
+            transitionStatus(
+                    requestEntity.getId(),
+                    DetectionStatus.DONE,
+                    null,
+                    Set.of(DetectionStatus.PROCESSING.value())
+            );
             totalCompletedCount.incrementAndGet();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             detectionRequestRepository.findById(job.requestId()).ifPresent(requestEntity -> {
                 requestEntity.setStatus(DetectionStatus.QUEUED.value());
-                detectionRequestRepository.save(requestEntity);
+                transitionStatus(
+                        job.requestId(),
+                        DetectionStatus.QUEUED,
+                        null,
+                        Set.of(DetectionStatus.PROCESSING.value())
+                );
             });
         } catch (Exception e) {
             detectionRequestRepository.findById(job.requestId()).ifPresent(requestEntity -> {
+                String failureMessage = buildFailureMessage(e);
                 requestEntity.setStatus(DetectionStatus.FAILED.value());
-                requestEntity.setFailureMessage(buildFailureMessage(e));
-                detectionRequestRepository.save(requestEntity);
+                requestEntity.setFailureMessage(failureMessage);
+                transitionStatus(
+                        job.requestId(),
+                        DetectionStatus.FAILED,
+                        failureMessage,
+                        Set.of(DetectionStatus.QUEUED.value(), DetectionStatus.PROCESSING.value())
+                );
             });
             totalFailedCount.incrementAndGet();
         } finally {
@@ -177,23 +209,38 @@ public class DetectionProcessingService {
 
     private void recoverPendingRequests() {
         Set<String> pendingStatuses = DetectionStatus.pendingValues();
-        List<DetectionRequestEntity> pendingRequests = detectionRequestRepository.findByStatusIn(pendingStatuses);
+        List<DetectionRequestEntity> pendingRequests = detectionRequestRepository.findByStatusInOrderByCreatedAtAsc(pendingStatuses);
         for (DetectionRequestEntity requestEntity : pendingRequests) {
             if (detectionResultRepository.findByRequestId(requestEntity.getId()).isPresent()) {
                 requestEntity.setStatus(DetectionStatus.DONE.value());
-                detectionRequestRepository.save(requestEntity);
+                transitionStatus(
+                        requestEntity.getId(),
+                        DetectionStatus.DONE,
+                        null,
+                        pendingStatuses
+                );
                 continue;
             }
 
             Path filePath = Paths.get(requestEntity.getFilePath());
             if (!Files.exists(filePath)) {
                 requestEntity.setStatus(DetectionStatus.FAILED.value());
-                detectionRequestRepository.save(requestEntity);
+                transitionStatus(
+                        requestEntity.getId(),
+                        DetectionStatus.FAILED,
+                        "Uploaded file is missing during startup recovery.",
+                        pendingStatuses
+                );
                 continue;
             }
 
             requestEntity.setStatus(DetectionStatus.QUEUED.value());
-            detectionRequestRepository.save(requestEntity);
+            transitionStatus(
+                    requestEntity.getId(),
+                    DetectionStatus.QUEUED,
+                    null,
+                    pendingStatuses
+            );
             if (!queue.offer(new DetectionJob(
                     requestEntity.getId(),
                     requestEntity.getFilePath(),
@@ -203,6 +250,29 @@ public class DetectionProcessingService {
             }
             totalEnqueuedCount.incrementAndGet();
         }
+    }
+
+    private boolean claimQueuedRequest(Long requestId) {
+        return transitionStatus(
+                requestId,
+                DetectionStatus.PROCESSING,
+                null,
+                Set.of(DetectionStatus.QUEUED.value())
+        );
+    }
+
+    private boolean transitionStatus(
+            Long requestId,
+            DetectionStatus nextStatus,
+            String failureMessage,
+            Set<String> currentStatuses
+    ) {
+        return detectionRequestRepository.transitionStatus(
+                requestId,
+                nextStatus.value(),
+                failureMessage,
+                currentStatuses
+        ) > 0;
     }
 
     private AiPredictionDto callAiServerWithRetry(Path filePath, String analysisMode) throws InterruptedException {

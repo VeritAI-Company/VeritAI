@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Lob;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -13,7 +14,16 @@ import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "detection_request")
+@Table(
+        name = "detection_request",
+        indexes = {
+                @Index(name = "idx_detection_request_status", columnList = "status"),
+                @Index(
+                        name = "idx_detection_request_reuse",
+                        columnList = "file_hash, analysis_mode, status, created_at"
+                )
+        }
+)
 public class DetectionRequestEntity {
 
     @Id
@@ -28,10 +38,16 @@ public class DetectionRequestEntity {
     private String clientType;
     private String fileName;
     private String filePath;
+
+    @Column(length = 64)
     private String fileHash;
     private String mimeType;
     private Long fileSize;
+
+    @Column(length = 32)
     private String status;
+
+    @Column(length = 32)
     private String analysisMode;
 
     @Column(length = 1000)
