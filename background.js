@@ -39,3 +39,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ error: "알 수 없는 요청입니다." });
     }
 });
+
+chrome.runtime.onInstalled.addListener(() => {
+    chrome.contextMenus.create({
+        id: "veritai_inspect",
+        title: "🔍 VeritAI로 조작 정밀 검사",
+        contexts: ["image", "video"]
+    });
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId === "veritai_inspect") {
+        chrome.tabs.sendMessage(tab.id, {
+            action: "context_menu_inspect",
+            srcUrl: info.srcUrl,
+            mediaType: info.mediaType 
+        });
+    }
+});
