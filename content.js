@@ -43,6 +43,11 @@ function injectCSS() {
         .veritai-details-box::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.4); border-radius: 4px; }
         .veritai-details-box::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.7); }
         @keyframes veritai-spin { to { transform: rotate(360deg); } }
+        #veritai-mini-hint { position: fixed; bottom: 24px; right: 24px; height: 44px; min-width: 44px; padding: 0 13px; box-sizing: border-box; background: rgba(30, 41, 59, 0.4); backdrop-filter: blur(6px); border-radius: 22px; display: flex; align-items: center; justify-content: center; color: white; cursor: default; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 2147483645; overflow: hidden; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        #veritai-mini-hint:hover { background: rgba(59, 130, 246, 0.95); padding: 0 20px; box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4); }
+        .veritai-mini-text { font-size: 13px; font-weight: bold; white-space: nowrap; max-width: 0; opacity: 0; transition: all 0.3s ease; font-family: sans-serif; letter-spacing: -0.3px; }
+        #veritai-mini-hint:hover .veritai-mini-text { max-width: 150px; opacity: 1; margin-left: 8px; }
+        .veritai-standalone-modal { position: fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); z-index: 2147483647; display: flex; flex-direction: column; align-items:center; justify-content:center; backdrop-filter:blur(5px); }
     `;
     document.head.appendChild(style);
 }
@@ -53,6 +58,15 @@ function escapeHTML(str) {
     return str.replace(/[&<>'"]/g, tag => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
     }[tag]));
+}
+
+function closeAllReportBoxes(force = false, exceptionSrc = null) {
+    document.querySelectorAll('.veritai-details-box').forEach(box => {
+        if (exceptionSrc && box.dataset.targetMedia === exceptionSrc) return;
+        if (!force && (box.dataset.isDragged === "true" || box.dataset.isFeedbackActive === "true")) return;
+        if (box.cleanupListeners) box.cleanupListeners();
+        box.remove();
+    });
 }
 
 function getFromCache(key) {
@@ -242,7 +256,7 @@ async function sendToBackend(blob, mediaType, analysisMode = FACE_CROP_ANALYSIS_
 }
 
 function updateStatusBadge(media, status, data = null) {
-    if (!isSystemOn) return;
+    if (!isSystemOn && media.dataset.forceInspect !== "true") return; 
     const wrapper = ensureWrapper(media);
     if (!wrapper) return;
     if (!media.dataset.veritaiScanned && status !== "loading") return;
@@ -344,12 +358,7 @@ function updateStatusBadge(media, status, data = null) {
 
             if (existingBox) return; 
 
-            document.querySelectorAll('.veritai-details-box').forEach(box => {
-                if (box.dataset.isDragged !== "true" && box.dataset.isFeedbackActive !== "true") {
-                    if (box.cleanupListeners) box.cleanupListeners();
-                    box.remove();
-                }
-            });
+            closeAllReportBoxes(false, targetMediaSrc); 
 
             const result = data.result;
             const faces = result.faces || [];
@@ -762,7 +771,8 @@ ${faceText}
 }
 
 async function startInspection(media) {
-    if (!isSystemOn || !shouldInspectMedia(media)) return;
+    if (!isSystemOn && media.dataset.forceInspect !== "true") return;
+    if (media.dataset.forceInspect !== "true" && !shouldInspectMedia(media)) return; 
     if (media.dataset.veritaiScanned === "true") return;
 
     const mediaUrl = media.currentSrc || media.src;
@@ -991,10 +1001,12 @@ function clearAllUI() {
         }
     });
     scannedMediaKeys.clear();
-    document.querySelectorAll('.veritai-details-box').forEach(box => {
-        if (box.cleanupListeners) box.cleanupListeners();
-        box.remove();
-    });
+    closeAllReportBoxes(true); 
+    const hint = document.getElementById('veritai-mini-hint');
+    if (hint) hint.remove();
+    const wrapper = document.getElementById('veritai-dropzone-wrapper');
+    if (wrapper) wrapper.remove();
+    document.querySelectorAll('.veritai-standalone-modal').forEach(m => m.remove());
 }
 
 chrome.storage.local.get(['isSystemOn', 'isAutoScanOn', 'isCleanUIMode'], (result) => {
@@ -1003,6 +1015,7 @@ chrome.storage.local.get(['isSystemOn', 'isAutoScanOn', 'isCleanUIMode'], (resul
     isCleanUIMode = result.isCleanUIMode || false;
     setTimeout(() => {
         if (isSystemOn) {
+            injectDropzone(); 
             document.querySelectorAll('img, video').forEach(media => attachUI(media));
             domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: [ "src","class", "style", "open", "aria-hidden", "aria-modal"] });
         }
@@ -1021,11 +1034,15 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
         
         if (!isSystemOn) {
             while (pendingInspectionQueue.length > 0) {
-                pendingInspectionQueue.shift().reject(new Error("시스템 중지됨"));}
+                pendingInspectionQueue.shift().reject(new Error("시스템 중지됨"));
+            }
+            pendingDetectionPolls.forEach(entry => entry.reject(new Error("시스템 중지됨")));
+            pendingDetectionPolls.clear();
             autoScanObserver.disconnect();
             domObserver.disconnect();
             clearAllUI();
         } else {
+            injectDropzone(); 
             if (modeChanged) {
                 if (!isAutoScanMode) {
                     while (pendingInspectionQueue.length > 0) {
@@ -1152,12 +1169,7 @@ async function runBatchPollingLoop() {
 }
 
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-        document.querySelectorAll('.veritai-details-box').forEach(box => {
-            if (box.cleanupListeners) box.cleanupListeners();
-            box.remove();
-        });
-    }
+    if (e.key === 'Escape') closeAllReportBoxes(true); 
 });
 
 document.addEventListener('click', (e) => {
@@ -1176,13 +1188,142 @@ document.addEventListener('click', (e) => {
     }
 }, true);
 
+function injectDropzone() {
+    if (document.getElementById('veritai-mini-hint')) return;
+
+    const miniHint = document.createElement('div');
+    miniHint.id = 'veritai-mini-hint';
+    miniHint.innerHTML = `<span style="font-size:18px;">📥</span><span class="veritai-mini-text">사진을 드래그해 검사</span>`;
+    document.body.appendChild(miniHint);
+
+    const wrapper = document.createElement('div');
+    wrapper.id = 'veritai-dropzone-wrapper';
+    wrapper.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:2147483646; display:none; background:rgba(15, 23, 42, 0.75); backdrop-filter:blur(5px); transition:opacity 0.3s ease; opacity:0; align-items:center; justify-content:center;';
+
+    const dz = document.createElement('div');
+    dz.innerHTML = `<div style="text-align:center; pointer-events:none;"><div style="font-size:52px; margin-bottom:16px;">📥</div><div style="font-size:20px; font-weight:bold; color:white; letter-spacing:0.5px;">이곳에 사진을 놓아<br><span style="color:#3b82f6;">VeritAI 조작 검사</span> 시작하기</div></div>`;
+    dz.style.cssText = 'width: 450px; height: 350px; background:rgba(30, 41, 59, 0.95); border: 4px dashed #3b82f6; border-radius: 24px; display:flex; align-items:center; justify-content:center; box-shadow: 0 20px 60px rgba(0,0,0,0.6); transition:all 0.2s ease; transform:scale(0.9);';
+
+    wrapper.appendChild(dz);
+    document.body.appendChild(wrapper);
+
+    let dragCounter = 0;
+
+    const hideDropzoneUI = () => {
+        dz.style.borderColor = '#3b82f6';
+        dz.style.background = 'rgba(30, 41, 59, 0.95)';
+        wrapper.style.opacity = '0';
+        dz.style.transform = 'scale(0.9)';
+        setTimeout(() => { 
+            if (dragCounter === 0) {
+                wrapper.style.display = 'none'; 
+                miniHint.style.display = 'flex'; 
+            }
+        }, 300);
+    };
+
+    window.addEventListener('dragenter', (e) => {
+        if (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes("text/uri-list") || e.dataTransfer.types.includes("text/html")) {
+            e.preventDefault();
+            dragCounter++;
+            if (dragCounter === 1) {
+                miniHint.style.display = 'none'; 
+                wrapper.style.display = 'flex';
+                requestAnimationFrame(() => { wrapper.style.opacity = '1'; dz.style.transform = 'scale(1)'; });
+            }
+        }
+    });
+
+    window.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter === 0) hideDropzoneUI(); 
+    });
+
+    wrapper.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+        dz.style.borderColor = '#10b981';
+        dz.style.background = 'rgba(16, 185, 129, 0.15)';
+    });
+
+    wrapper.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation(); 
+        dragCounter = 0;
+        hideDropzoneUI(); 
+
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            const file = e.dataTransfer.files[0];
+            if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+                analyzeStandaloneMedia(URL.createObjectURL(file), file.type.startsWith('video/'));
+            }
+        } else {
+            const html = e.dataTransfer.getData('text/html');
+            const srcMatch = html && html.match(/src\s*=\s*['"]([^'"]+)['"]/);
+            if (srcMatch) analyzeStandaloneMedia(srcMatch[1], false);
+            else {
+                const uri = e.dataTransfer.getData('text/uri-list');
+                if (uri) analyzeStandaloneMedia(uri, false);
+            }
+        }
+    });
+}
+
+function analyzeStandaloneMedia(src, isVideo) {
+    const modal = document.createElement('div');
+    modal.className = 'veritai-standalone-modal';
+    
+    const closeBtn = document.createElement('div');
+    closeBtn.innerHTML = '✕ 닫기';
+    closeBtn.style.cssText = 'position:absolute; top:20px; right:30px; color:white; font-size:16px; cursor:pointer; font-weight:bold; background:rgba(255,255,255,0.2); padding:5px 10px; border-radius:8px; z-index:10; transition:0.2s;';
+    closeBtn.onmouseenter = () => closeBtn.style.background = 'rgba(239, 68, 68, 0.8)';
+    closeBtn.onmouseleave = () => closeBtn.style.background = 'rgba(255,255,255,0.2)';
+    closeBtn.onclick = () => modal.remove();
+    
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:relative; display:inline-block; max-width:80vw; max-height:80vh; background:black; border-radius:8px; box-shadow: 0 0 30px rgba(0,0,0,0.8);';
+    
+    const media = document.createElement(isVideo ? 'video' : 'img');
+    media.src = src;
+    media.style.cssText = 'max-width:80vw; max-height:80vh; display:block; border-radius:8px;';
+    if (isVideo) { media.controls = true; media.autoplay = true; media.muted = true; }
+    
+    wrapper.appendChild(media);
+    modal.appendChild(closeBtn);
+    modal.appendChild(wrapper);
+    document.body.appendChild(modal);
+
+    const initInspect = () => setTimeout(() => { 
+        media.dataset.forceInspect = "true"; 
+        startInspection(media); 
+    }, 300);
+    if (isVideo) media.onloadeddata = initInspect; else media.onload = initInspect;
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "clear_cache_and_rescan") {
         scanCache.clear();      
         scannedMediaKeys.clear(); 
         clearAllUI();            
-        document.querySelectorAll('img, video').forEach(media => attachUI(media));
+        if (isSystemOn) {
+            document.querySelectorAll('img, video').forEach(media => attachUI(media));
+        }
         sendResponse({ success: true });
+    } 
+    else if (request.action === "context_menu_inspect") {
+        const targetSrc = request.srcUrl;
+        const mediaElements = Array.from(document.querySelectorAll('img, video'));
+        const foundMedia = mediaElements.find(m => m.src === targetSrc || m.currentSrc === targetSrc);
+        
+        if (foundMedia && isVisibleMedia(foundMedia)) {
+            foundMedia.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            foundMedia.dataset.forceInspect = "true"; 
+            startInspection(foundMedia);
+        } else {
+            analyzeStandaloneMedia(targetSrc, request.mediaType === "video");
+        }
     }
     return true;
 });

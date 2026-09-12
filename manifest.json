@@ -3,7 +3,7 @@
   "name": "Deepfake Detector",
   "version": "1.1",
   "description": "Detect deepfake images or video frames on web pages.",
-  "permissions": ["activeTab", "scripting", "tabs", "storage", "offscreen"],
+  "permissions": ["activeTab", "scripting", "tabs", "storage", "offscreen", "contextMenus"],
   "host_permissions": [
     "<all_urls>",
     "http://localhost:8080/*"
