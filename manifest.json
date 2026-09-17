@@ -9,22 +9,23 @@
     "http://localhost:8080/*"
   ],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "frontend/popup.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "frontend/background.js"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["frontend/content.js"],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": true,
+      "type": "module"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["worker.js"],
+      "resources": ["frontend/worker.js"],
       "matches": ["<all_urls>"]
     }
   ]
