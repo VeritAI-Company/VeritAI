@@ -62,3 +62,27 @@ document.getElementById('clear-cache-btn').addEventListener('click', () => {
         });
     });
 });
+
+function loadStatistics() {
+    const today = new Date().toLocaleDateString(); 
+    
+    chrome.storage.local.get(['veritai_stat_date', 'veritai_stat_scanned', 'veritai_stat_blocked'], (res) => {
+        let scanned = res.veritai_stat_scanned || 0;
+        let blocked = res.veritai_stat_blocked || 0;
+        
+        if (res.veritai_stat_date !== today) {
+            scanned = 0;
+            blocked = 0;
+            chrome.storage.local.set({
+                veritai_stat_date: today,
+                veritai_stat_scanned: 0,
+                veritai_stat_blocked: 0
+            });
+        }
+        
+        document.getElementById('stat-scanned').innerText = scanned.toLocaleString();
+        document.getElementById('stat-blocked').innerText = blocked.toLocaleString();
+    });
+}
+
+document.addEventListener('DOMContentLoaded', loadStatistics);

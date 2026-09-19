@@ -1,10 +1,25 @@
+let offscreenTimeout = null;
+const OFFSCREEN_LIFETIME = 30000; 
+
 async function setupOffscreen() {
-    if (await chrome.offscreen.hasDocument()) return;
-    await chrome.offscreen.createDocument({
-        url: 'offscreen.html',
-        reasons: ['WORKERS'], 
-        justification: '이미지 리사이징 및 처리 연산'
-    });
+    if (offscreenTimeout) {
+        clearTimeout(offscreenTimeout);
+    }
+    
+    if (!(await chrome.offscreen.hasDocument())) {
+        await chrome.offscreen.createDocument({
+            url: 'frontend/offscreen.html', 
+            reasons: ['WORKERS'], 
+            justification: '이미지 리사이징 및 처리 연산'
+        });
+    }
+    
+    offscreenTimeout = setTimeout(async () => {
+        if (await chrome.offscreen.hasDocument()) {
+            await chrome.offscreen.closeDocument();
+        }
+        offscreenTimeout = null;
+    }, OFFSCREEN_LIFETIME);
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
