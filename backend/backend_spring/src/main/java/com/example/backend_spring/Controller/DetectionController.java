@@ -3,6 +3,7 @@ package com.example.backend_spring.Controller;
 import com.example.backend_spring.Dto.AiPredictionDto;
 import com.example.backend_spring.Dto.DetectionResponseDto;
 import com.example.backend_spring.Dto.FeedbackRequestDto;
+import com.example.backend_spring.Config.AppProperties;
 import com.example.backend_spring.Entity.DetectionRequestEntity;
 import com.example.backend_spring.Entity.DetectionResultEntity;
 import com.example.backend_spring.Repository.DetectionRequestRepository;
@@ -18,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,10 +30,15 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 @RestController
 @RequestMapping("/api")
@@ -44,18 +51,20 @@ public class DetectionController {
     private final DetectionProcessingService detectionProcessingService;
     private final DetectionUploadService detectionUploadService;
     private final ObjectMapper objectMapper;
-    private final Object dedupLock = new Object();
+    private final AppProperties appProperties;
 
     public DetectionController(DetectionRequestRepository detectionRequestRepository,
                                DetectionResultRepository detectionResultRepository,
                                DetectionProcessingService detectionProcessingService,
                                DetectionUploadService detectionUploadService,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               AppProperties appProperties) {
         this.detectionRequestRepository = detectionRequestRepository;
         this.detectionResultRepository = detectionResultRepository;
         this.detectionProcessingService = detectionProcessingService;
         this.detectionUploadService = detectionUploadService;
         this.objectMapper = objectMapper;
+        this.appProperties = appProperties;
     }
 
     @PostMapping("/detections")
@@ -72,8 +81,12 @@ public class DetectionController {
             UploadedDetectionFile uploadedFile = detectionUploadService.storeValidated(file);
             String normalizedAnalysisMode = detectionProcessingService.normalizeAnalysisMode(analysisMode);
 
-            synchronized (dedupLock) {
-                Optional<ResponseEntity<?>> reusableResponse = findReusableDetection(uploadedFile.fileHash(), normalizedAnalysisMode);
+            String dedupKey = buildDedupKey(uploadedFile.fileHash(), normalizedAnalysisMode);
+            Optional<ResponseEntity<?>> reusableResponse = findReusableDetection(
+                    uploadedFile.fileHash(),
+                    normalizedAnalysisMode,
+                    dedupKey
+            );
                 if (reusableResponse.isPresent()) {
                     detectionUploadService.deleteQuietly(uploadedFile.path());
                     return reusableResponse.get();
@@ -85,14 +98,22 @@ public class DetectionController {
                 requestEntity.setFileName(uploadedFile.originalFileName());
                 requestEntity.setFilePath(uploadedFile.path().toString());
                 requestEntity.setFileHash(uploadedFile.fileHash());
+                requestEntity.setDedupKey(dedupKey);
+                requestEntity.setModelVersion(appProperties.getDetection().getModelVersion());
+                requestEntity.setPipelineVersion(appProperties.getDetection().getPipelineVersion());
                 requestEntity.setMimeType(uploadedFile.mimeType());
                 requestEntity.setFileSize(uploadedFile.fileSize());
                 requestEntity.setAnalysisMode(normalizedAnalysisMode);
                 requestEntity.setStatus(DetectionStatus.QUEUED.value());
-                detectionRequestRepository.save(requestEntity);
+            try {
+                detectionRequestRepository.saveAndFlush(requestEntity);
+            } catch (DataIntegrityViolationException duplicateRace) {
+                detectionUploadService.deleteQuietly(uploadedFile.path());
+                return findReusableDetection(uploadedFile.fileHash(), normalizedAnalysisMode, dedupKey)
+                        .orElseThrow(() -> duplicateRace);
+            }
 
                 detectionProcessingService.enqueue(requestEntity.getId(), uploadedFile.path(), normalizedAnalysisMode);
-            }
 
             DetectionResponseDto responseDto = new DetectionResponseDto(
                     requestEntity.getId(),
@@ -109,6 +130,7 @@ public class DetectionController {
 
         } catch (QueueFullException e) {
             requestEntity.setStatus(DetectionProcessingService.STATUS_FAILED);
+            requestEntity.setDedupKey(null);
             if (requestEntity.getId() != null) {
                 detectionRequestRepository.save(requestEntity);
             }
@@ -123,6 +145,7 @@ public class DetectionController {
 
         } catch (Exception e) {
             requestEntity.setStatus(DetectionProcessingService.STATUS_FAILED);
+            requestEntity.setDedupKey(null);
             if (requestEntity.getId() != null) {
                 detectionRequestRepository.save(requestEntity);
             }
@@ -138,18 +161,41 @@ public class DetectionController {
 
     @GetMapping("/detections/status")
     public ResponseEntity<?> getDetectionStatuses(@RequestParam("ids") List<Long> requestIds) {
+        int maxIds = Math.max(1, appProperties.getDetection().getBatchStatusMaxIds());
+        if (requestIds.size() > maxIds) {
+            return buildErrorResponse(
+                    HttpStatus.BAD_REQUEST,
+                    null,
+                    "A maximum of " + maxIds + " request IDs is allowed.",
+                    null
+            );
+        }
+
         List<DetectionResponseDto> items = new ArrayList<>();
         Map<Long, DetectionRequestEntity> requestsById = new LinkedHashMap<>();
-        detectionRequestRepository.findAllById(requestIds).forEach(requestEntity ->
+        LinkedHashSet<Long> uniqueRequestIds = new LinkedHashSet<>();
+        for (Long requestId : requestIds) {
+            if (requestId != null) {
+                uniqueRequestIds.add(requestId);
+            }
+        }
+        detectionRequestRepository.findAllById(uniqueRequestIds).forEach(requestEntity ->
                 requestsById.put(requestEntity.getId(), requestEntity)
         );
+
+        Map<Long, DetectionResultEntity> resultsByRequestId = new HashMap<>();
+        if (!requestsById.isEmpty()) {
+            detectionResultRepository.findByRequestIdIn(requestsById.keySet()).forEach(resultEntity ->
+                    resultsByRequestId.put(resultEntity.getRequestId(), resultEntity)
+            );
+        }
         for (Long requestId : requestIds) {
             if (requestId == null) {
                 continue;
             }
             DetectionRequestEntity requestEntity = requestsById.get(requestId);
             if (requestEntity != null) {
-                items.add(buildDetectionResponse(requestEntity));
+                items.add(buildDetectionResponse(requestEntity, resultsByRequestId.get(requestId)));
             }
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -219,7 +265,14 @@ public class DetectionController {
 
     private DetectionResponseDto buildDetectionResponse(DetectionRequestEntity requestEntity) {
         Optional<DetectionResultEntity> resultOpt = detectionResultRepository.findByRequestId(requestEntity.getId());
-        AiPredictionDto resultDto = resultOpt.map(this::deserializeResult).orElse(null);
+        return buildDetectionResponse(requestEntity, resultOpt.orElse(null));
+    }
+
+    private DetectionResponseDto buildDetectionResponse(
+            DetectionRequestEntity requestEntity,
+            DetectionResultEntity resultEntity
+    ) {
+        AiPredictionDto resultDto = resultEntity == null ? null : deserializeResult(resultEntity);
         return new DetectionResponseDto(
                 requestEntity.getId(),
                 requestEntity.getStatus(),
@@ -229,13 +282,19 @@ public class DetectionController {
         );
     }
 
-    private Optional<ResponseEntity<?>> findReusableDetection(String fileHash, String analysisMode) {
+    private Optional<ResponseEntity<?>> findReusableDetection(String fileHash, String analysisMode, String dedupKey) {
         Optional<DetectionRequestEntity> existingOpt =
-                detectionRequestRepository.findFirstByFileHashAndAnalysisModeAndStatusInOrderByCreatedAtDesc(
-                        fileHash,
-                        analysisMode,
+                detectionRequestRepository.findFirstByDedupKeyAndStatusInOrderByCreatedAtDesc(
+                        dedupKey,
                         DetectionStatus.reusableValues()
                 );
+        if (existingOpt.isEmpty()) {
+            existingOpt = detectionRequestRepository.findFirstByFileHashAndAnalysisModeAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
+                    fileHash,
+                    analysisMode,
+                    DetectionStatus.reusableValues()
+            );
+        }
         if (existingOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -267,6 +326,18 @@ public class DetectionController {
         }
 
         return Optional.empty();
+    }
+
+    private String buildDedupKey(String fileHash, String analysisMode) {
+        String source = fileHash + ':' + analysisMode + ':'
+                + appProperties.getDetection().getModelVersion() + ':'
+                + appProperties.getDetection().getPipelineVersion();
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available.", e);
+        }
     }
 
     private boolean isPendingStatus(String status) {

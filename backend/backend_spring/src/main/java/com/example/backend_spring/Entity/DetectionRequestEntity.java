@@ -1,5 +1,6 @@
 package com.example.backend_spring.Entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -18,6 +19,9 @@ import java.time.LocalDateTime;
         name = "detection_request",
         indexes = {
                 @Index(name = "idx_detection_request_status", columnList = "status"),
+                @Index(name = "idx_detection_request_status_created", columnList = "status, created_at"),
+                @Index(name = "idx_detection_request_status_updated", columnList = "status, updated_at"),
+                @Index(name = "uk_detection_request_dedup", columnList = "dedup_key", unique = true),
                 @Index(
                         name = "idx_detection_request_reuse",
                         columnList = "file_hash, analysis_mode, status, created_at"
@@ -41,6 +45,18 @@ public class DetectionRequestEntity {
 
     @Column(length = 64)
     private String fileHash;
+
+    @JsonIgnore
+    @Column(length = 64, unique = true)
+    private String dedupKey;
+
+    @JsonIgnore
+    @Column(length = 64)
+    private String modelVersion;
+
+    @JsonIgnore
+    @Column(length = 64)
+    private String pipelineVersion;
     private String mimeType;
     private Long fileSize;
 
@@ -126,6 +142,30 @@ public class DetectionRequestEntity {
 
     public void setFileHash(String fileHash) {
         this.fileHash = fileHash;
+    }
+
+    public String getDedupKey() {
+        return dedupKey;
+    }
+
+    public void setDedupKey(String dedupKey) {
+        this.dedupKey = dedupKey;
+    }
+
+    public String getModelVersion() {
+        return modelVersion;
+    }
+
+    public void setModelVersion(String modelVersion) {
+        this.modelVersion = modelVersion;
+    }
+
+    public String getPipelineVersion() {
+        return pipelineVersion;
+    }
+
+    public void setPipelineVersion(String pipelineVersion) {
+        this.pipelineVersion = pipelineVersion;
     }
 
     public String getMimeType() {
