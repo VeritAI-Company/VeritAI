@@ -15,6 +15,16 @@ const pendingInspectionQueue = [];
 let mutationQueue = [];
 let observerDebounceTimer = null;
 
+const DOM_OBSERVER_OPTIONS = {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['src', 'srcset']
+};
+const MUTATION_QUEUE_LIMIT = 2000;
+
+const SETTING_KEYS = ['isSystemOn', 'isAutoScanOn', 'isCleanUIMode'];
+
 injectCSS();
 
 function escapeHTML(str) {
@@ -41,10 +51,22 @@ function getFromCache(key) {
     return value;
 }
 
+function releaseFrameUrl(value) {
+    if (value && value.frameUrl) URL.revokeObjectURL(value.frameUrl);
+}
+
 function setToCache(key, value) {
-    if (scanCache.has(key)) scanCache.delete(key);
+    if (scanCache.has(key)) {
+        const prev = scanCache.get(key);
+        if (prev !== value && prev?.frameUrl !== value?.frameUrl) releaseFrameUrl(prev);
+        scanCache.delete(key);
+    }
     scanCache.set(key, value);
-    if (scanCache.size > MAX_CACHE_SIZE) scanCache.delete(scanCache.keys().next().value);
+    if (scanCache.size > MAX_CACHE_SIZE) {
+        const oldestKey = scanCache.keys().next().value;
+        releaseFrameUrl(scanCache.get(oldestKey));
+        scanCache.delete(oldestKey);
+    }
 }
 
 function manageMemoryCache() {
@@ -61,6 +83,66 @@ function getMediaKey(media) {
     if (source) return `${media.tagName}:${source}`;
     const rect = media.getBoundingClientRect();
     return `${media.tagName}:${Math.round(rect.left)}:${Math.round(rect.top)}:${Math.round(rect.width)}:${Math.round(rect.height)}`;
+}
+
+let veritaiIdCounter = 0;
+
+function getMediaId(media) {
+    if (!media.dataset.veritaiId) media.dataset.veritaiId = `v${++veritaiIdCounter}`;
+    return media.dataset.veritaiId;
+}
+
+function findOwnedElement(media, selector) {
+    const wrapper = ensureWrapper(media);
+    if (!wrapper) return null;
+    return wrapper.querySelector(`${selector}[data-veritai-for="${getMediaId(media)}"]`);
+}
+
+function getShadowHost(media) {
+    return findOwnedElement(media, 'veritai-host');
+}
+
+function getCheckButton(media) {
+    return findOwnedElement(media, '.veritai-check-btn');
+}
+
+function getUIContainer(media) {
+    const host = getShadowHost(media);
+    return host && host.shadowRoot ? host.shadowRoot.querySelector('.veritai-ui-container') : null;
+}
+
+function getBadge(media) {
+    const host = getShadowHost(media);
+    return host && host.shadowRoot ? host.shadowRoot.querySelector('.veritai-status-badge') : null;
+}
+
+function getAllBadges() {
+    return Array.from(document.querySelectorAll('veritai-host'))
+        .map(host => host.shadowRoot && host.shadowRoot.querySelector('.veritai-status-badge'))
+        .filter(Boolean);
+}
+
+function positionOverlay(el, media, inset = 0) {
+    const wrapper = el.parentElement;
+    if (!wrapper || !media.isConnected) return;
+    const mediaRect = media.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const top = mediaRect.top - wrapperRect.top - wrapper.clientTop + wrapper.scrollTop + inset;
+    const left = mediaRect.left - wrapperRect.left - wrapper.clientLeft + wrapper.scrollLeft + inset;
+    el.style.top = `${Math.round(top)}px`;
+    el.style.left = `${Math.round(left)}px`;
+}
+
+function removeMediaUI(media) {
+    const host = getShadowHost(media);
+    if (host) host.remove();
+    const btn = getCheckButton(media);
+    if (btn) btn.remove();
+}
+
+function clearMediaHighlight(media) {
+    media.style.border = '';
+    media.style.boxShadow = '';
 }
 
 function isVisibleMedia(media) {
@@ -126,14 +208,15 @@ function updateStatusBadge(media, status, data = null) {
     if (!wrapper) return;
     if (!media.dataset.veritaiScanned && status !== "loading") return;
 
-    const existingBtn = wrapper.querySelector('.veritai-check-btn');
+    const existingBtn = getCheckButton(media);
     if (existingBtn) existingBtn.remove();
 
-    let shadowHost = wrapper.querySelector('veritai-host');
+    let shadowHost = getShadowHost(media);
     let shadowRoot;
-    
+
     if (!shadowHost) {
         shadowHost = document.createElement('veritai-host');
+        shadowHost.dataset.veritaiFor = getMediaId(media);
         shadowHost.style.cssText = 'position: absolute; top: 0; left: 0; z-index: 2147483647; display: block; overflow: visible;';
         wrapper.appendChild(shadowHost);
         
@@ -145,6 +228,7 @@ function updateStatusBadge(media, status, data = null) {
     } else {
         shadowRoot = shadowHost.shadowRoot;
     }
+    positionOverlay(shadowHost, media);
 
     let uiContainer = shadowRoot.querySelector('.veritai-ui-container');
     if (!uiContainer) {
@@ -189,7 +273,13 @@ function updateStatusBadge(media, status, data = null) {
     else if (status === "error") {
         uiContainer.style.display = 'flex';
         uiContainer.style.opacity = '1';
-        badge.innerHTML = `${data?.message || "분석 실패"} <span style="margin-left: 4px; font-size: 12px; cursor:pointer;">🔄 재시도</span>`;
+        badge.textContent = '';
+        const errorText = document.createElement('span');
+        errorText.textContent = data?.message || "분석 실패";
+        const retryText = document.createElement('span');
+        retryText.style.cssText = 'margin-left: 4px; font-size: 12px; cursor:pointer;';
+        retryText.textContent = '🔄 재시도';
+        badge.append(errorText, retryText);
         badge.style.background = "rgba(100, 116, 139, 0.9)";
         badge.style.cursor = "pointer";
         
@@ -198,6 +288,7 @@ function updateStatusBadge(media, status, data = null) {
             if (uiContainer) uiContainer.remove();
             if (shadowHost) shadowHost.remove();
             delete media.dataset.veritaiScanned;
+            media.dataset.veritaiUserRequest = "true";
             startInspection(media);
         };
         badge.onclick = retryAction;
@@ -206,6 +297,7 @@ function updateStatusBadge(media, status, data = null) {
     else if (status === "fake" || status === "real") {
         badge.style.cursor = "pointer";
         const targetMediaSrc = media.currentSrc || media.src || "unknown_media";
+        const reportImageSrc = data?.frameUrl || targetMediaSrc;
 
         if (status === "fake") {
             uiContainer.style.display = 'flex';
@@ -267,12 +359,13 @@ function updateStatusBadge(media, status, data = null) {
                 }
             });
 
-            if (existingBox) return; 
+            if (existingBox) return existingBox;
 
-            closeAllReportBoxes(false, targetMediaSrc); 
+            closeAllReportBoxes(false, targetMediaSrc);
 
             const result = data.result;
             const faces = result.faces || [];
+            const isVideoMedia = media.tagName === "VIDEO";
 
             const faceText = faces.length === 0 ?
                 "<div style='text-align:center; color:#94a3b8; padding: 10px 0; font-size: 11px;'>전체 이미지 분석 완료</div>" :
@@ -305,6 +398,7 @@ function updateStatusBadge(media, status, data = null) {
 <div style="display: flex; flex-direction: column; gap: 6px;">
     <div><b>ID:</b> <span style="color:#e2e8f0;">${escapeHTML(data.requestId) || 'N/A'}</span></div>
     <div><b>판정:</b> ${readDeepfakeFlag(result) ? "<span style='color:#ef4444; font-weight:bold;'>조작 의심</span>" : "<span style='color:#10b981; font-weight:bold;'>정상</span>"}</div>
+    ${isVideoMedia && data.frameTime != null ? `<div><b>검사 장면:</b> <span style="color:#e2e8f0;">영상 ${formatFrameTime(data.frameTime)} 지점</span></div>` : ''}
 </div>
 <div style="margin:12px 0; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 8px; background: rgba(0,0,0,0.2);">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -326,7 +420,8 @@ function updateStatusBadge(media, status, data = null) {
 </div>
 <div style="margin:12px 0; border-top:1px dashed rgba(255,255,255,0.2);"></div>
 ${faceText}
-<div style="margin-top: 15px; display: flex; justify-content: flex-end;">
+<div style="margin-top: 15px; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px;">
+    ${isVideoMedia ? `<button class="veritai-reinspect-btn" style="font-size: 11px; padding: 4px 8px; cursor: pointer; background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 4px;">🔄 현재 장면 다시 검사</button>` : ''}
     <button class="veritai-feedback-btn" style="font-size: 11px; padding: 4px 8px; cursor: pointer; background: rgba(255, 60, 60, 0.1); color: #ff6b6b; border: 1px solid rgba(255, 60, 60, 0.3); border-radius: 4px; transition: all 0.2s;">🚨 신고</button>
 </div>`.trim();
 
@@ -357,7 +452,7 @@ ${faceText}
                 imgObj.onerror = () => {
                     imgObj.removeAttribute("crossOrigin");
                     imgObj.onerror = null;
-                    imgObj.src = targetMediaSrc; 
+                    imgObj.src = reportImageSrc; 
                 };
 
                 imgObj.onload = () => {
@@ -445,7 +540,7 @@ ${faceText}
                         hmImg.src = "data:image/jpeg;base64," + result.heatmapBase64;
                     }
                 };
-                imgObj.src = targetMediaSrc;
+                imgObj.src = reportImageSrc;
             }
 
             const toggleBtn = detailsBox.querySelector('#veritai-toggle-xai-btn');
@@ -564,6 +659,17 @@ ${faceText}
                 closeBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') closeAction(e); });
             }
 
+            const reinspectBtn = detailsBox.querySelector('.veritai-reinspect-btn');
+            if (reinspectBtn) {
+                reinspectBtn.addEventListener('click', (evt) => {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    if (detailsBox.cleanupListeners) detailsBox.cleanupListeners();
+                    detailsBox.remove();
+                    reinspectMedia(media);
+                });
+            }
+
             const feedbackBtn = detailsBox.querySelector('.veritai-feedback-btn');
             if (feedbackBtn) {
                 feedbackBtn.onclick = (e) => {
@@ -664,6 +770,8 @@ ${faceText}
                 };
                 document.addEventListener('click', closeDetails);
             }, 10);
+
+            return detailsBox;
         };
 
         badge.onmouseenter = (e) => {
@@ -677,11 +785,12 @@ ${faceText}
                 e.preventDefault();
                 badge.style.opacity = "1";
                 badge.dataset.isHovered = "true";
-                showReportBox(e);
-                
+                const openedBox = showReportBox(e);
+
                 setTimeout(() => {
-                    const toggleBtn = detailsBox.querySelector('#veritai-toggle-xai-btn');
-                    const cBtn = detailsBox.querySelector('.veritai-close-btn');
+                    if (!openedBox || !openedBox.isConnected) return;
+                    const toggleBtn = openedBox.querySelector('#veritai-toggle-xai-btn');
+                    const cBtn = openedBox.querySelector('.veritai-close-btn');
                     if (toggleBtn && !toggleBtn.disabled) toggleBtn.focus();
                     else if (cBtn) cBtn.focus();
                 }, 50);
@@ -705,7 +814,11 @@ ${faceText}
                     if (uiContainer && uiContainer.parentNode) {
                         uiContainer.style.transition = "opacity 0.5s ease-out";
                         uiContainer.style.opacity = "0";
-                        setTimeout(() => { if (uiContainer && uiContainer.parentNode) uiContainer.style.display = "none"; }, 1000);
+                        setTimeout(() => {
+                            if (uiContainer && uiContainer.parentNode && isCleanUIMode && badge.dataset.isHovered !== "true") {
+                                uiContainer.style.display = "none";
+                            }
+                        }, 1000);
                     }
                 }
             }, 100);
@@ -713,6 +826,29 @@ ${faceText}
 
         badge.onclick = (e) => { e.preventDefault(); e.stopPropagation(); };
     }
+}
+
+function formatFrameTime(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const m = Math.floor(total / 60);
+    const sec = String(total % 60).padStart(2, '0');
+    return `${m}:${sec}`;
+}
+
+function reinspectMedia(media) {
+    const mediaUrl = media.currentSrc || media.src;
+    if (mediaUrl && scanCache.has(mediaUrl)) {
+        releaseFrameUrl(scanCache.get(mediaUrl));
+        scanCache.delete(mediaUrl);
+    }
+    if (media.dataset.veritaiScanKey) scannedMediaKeys.delete(media.dataset.veritaiScanKey);
+    delete media.dataset.veritaiScanned;
+    delete media.dataset.veritaiScanKey;
+    delete media.dataset.veritaiFadedOut;
+    removeMediaUI(media);
+    clearMediaHighlight(media);
+    media.dataset.veritaiUserRequest = "true";
+    startInspection(media);
 }
 
 async function startInspection(media) {
@@ -738,11 +874,8 @@ async function startInspection(media) {
     media.dataset.veritaiScanned = "true";
     media.dataset.veritaiScanKey = scanKey;
 
-    const wrapper = ensureWrapper(media);
-    if (wrapper) {
-        const btn = wrapper.querySelector('.veritai-check-btn');
-        if (btn) btn.remove();
-    }
+    const checkBtn = getCheckButton(media);
+    if (checkBtn) checkBtn.remove();
 
     updateStatusBadge(media, "waiting");
 
@@ -758,16 +891,21 @@ async function startInspection(media) {
 
         let blob;
         let mediaType = "image";
+        let frameTime = null;
         if (media.tagName === "VIDEO") {
+            frameTime = media.currentTime;
             blob = await captureVideoBlob(media);
             mediaType = "video_frame";
         } else {
             blob = await captureImageBlob(mediaUrl);
         }
 
-        const data = await sendToBackend(blob, mediaType);
+        const response = await sendToBackend(blob, mediaType);
 
         if (!media.dataset.veritaiScanned) return;
+
+        delete media.dataset.veritaiUserRequest;
+        const data = { ...response, frameUrl: URL.createObjectURL(blob), frameTime };
 
         if (mediaUrl) setToCache(mediaUrl, data);
 
@@ -778,32 +916,43 @@ async function startInspection(media) {
         if (isFake) updateStatusBadge(media, "fake", data);
         else updateStatusBadge(media, "real", data);
     }, media).catch((err) => {
+        const userRequested = media.dataset.veritaiUserRequest === "true" || media.dataset.forceInspect === "true";
+        delete media.dataset.veritaiUserRequest;
         if (!isSystemOn) return;
 
-        const isLikelyAd = (window !== window.top) || media.closest(GLOBAL_AD_SELECTOR);
+        if (err && err.isCancelled) {
+            delete media.dataset.veritaiScanned;
+            delete media.dataset.veritaiAttached;
+            if (media.dataset.veritaiScanKey) {
+                scannedMediaKeys.delete(media.dataset.veritaiScanKey);
+                delete media.dataset.veritaiScanKey;
+            }
+            removeMediaUI(media);  
+            attachUI(media);        
+            return;
+        }
 
-        if (err.message.includes("CORS") || err.message.includes("보안 차단됨") || (err.name === 'TypeError' && err.message === 'Failed to fetch' && isLikelyAd)) {
+        const isLikelyAd = (window !== window.top) || media.closest(GLOBAL_AD_SELECTOR);
+        const errMessage = err?.message || "";
+        const isBlocked = errMessage.includes("CORS") || errMessage.includes("보안 차단됨");
+
+        if (!userRequested && (isBlocked || (err?.name === 'TypeError' && errMessage === 'Failed to fetch' && isLikelyAd))) {
             delete media.dataset.veritaiScanned;
             delete media.dataset.veritaiScanKey;
-            const wrapper = ensureWrapper(media);
-            if (wrapper) {
-                const ui = wrapper.querySelector('.veritai-ui-container');
-                if (ui) ui.remove();
-                const btn = wrapper.querySelector('.veritai-check-btn');
-                if (btn) btn.remove(); 
-            }
-            return; 
+            removeMediaUI(media);
+            return;
         }
 
         let friendlyMessage = "분석 오류";
-        if (err.status === 429) friendlyMessage = "요청 과다 (잠시 후 시도)";
+        if (isBlocked) friendlyMessage = media.tagName === "VIDEO" ? "영상 접근 차단 (사이트 보안)" : "이미지 접근 차단 (사이트 보안)";
+        else if (err.status === 429) friendlyMessage = "요청 과다 (잠시 후 시도)";
         else if (err.status === 408) friendlyMessage = "응답 지연 (서버 혼잡)";
         else if (err.status >= 500) friendlyMessage = "서버 내부 오류";
-        else if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
+        else if (err?.name === 'TypeError' && errMessage === 'Failed to fetch') {
             friendlyMessage = "접근 불가 (보안차단/서버꺼짐)";
         }
         else if (err.status === 400 || err.status === 415) friendlyMessage = "지원하지 않는 이미지";
-        else friendlyMessage = err.message || "분석 실패";
+        else friendlyMessage = errMessage || "분석 실패";
         
         updateStatusBadge(media, "error", { message: friendlyMessage });
         delete media.dataset.veritaiScanned;
@@ -820,6 +969,7 @@ const autoScanObserver = new IntersectionObserver((entries) => {
         if (entry.isIntersecting && entry.target.clientWidth > 80) {
             if (entry.target.dataset.scanTimer) clearTimeout(entry.target.dataset.scanTimer);
             entry.target.dataset.scanTimer = setTimeout(() => {
+                if (!isSystemOn || !isAutoScanMode) return;
                 const rect = entry.target.getBoundingClientRect();
                 if (rect.top < window.innerHeight && rect.bottom > 0) {
                     startInspection(entry.target);
@@ -834,6 +984,9 @@ const domObserver = new MutationObserver((mutations) => {
     if (!isSystemOn) return;
 
     mutationQueue.push(...mutations);
+    if (mutationQueue.length > MUTATION_QUEUE_LIMIT) {
+        mutationQueue = mutationQueue.slice(-MUTATION_QUEUE_LIMIT);
+    }
     if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
     observerDebounceTimer = setTimeout(() => {
         const mutationsToProcess = mutationQueue;
@@ -861,13 +1014,9 @@ const domObserver = new MutationObserver((mutations) => {
                     delete target.dataset.veritaiAttached;
                     delete target.dataset.veritaiScanned;
                     delete target.dataset.veritaiScanKey;
-                    const wrapper = ensureWrapper(target);
-                    if (wrapper) {
-                        const oldBadge = wrapper.querySelector('.veritai-ui-container');
-                        if (oldBadge) oldBadge.remove();
-                        const oldBtn = wrapper.querySelector('.veritai-check-btn');
-                        if (oldBtn) oldBtn.remove();
-                    }
+                    delete target.dataset.veritaiFadedOut;
+                    removeMediaUI(target);
+                    clearMediaHighlight(target);
                     if (target.tagName === 'IMG' && !target.complete) target.addEventListener('load', () => attachUI(target), { once: true });
                     else attachUI(target); 
                 }
@@ -899,7 +1048,7 @@ function attachUI(media, retryCount = 0) {
     }
 
     const wrapper = ensureWrapper(media);
-    const hasUI = wrapper && (wrapper.querySelector('.veritai-check-btn') || wrapper.querySelector('.veritai-status-badge'));
+    const hasUI = Boolean(getCheckButton(media) || getShadowHost(media));
     const mediaUrl = media.currentSrc || media.src;
 
     if (mediaUrl && scanCache.has(mediaUrl) && !hasUI) {
@@ -919,35 +1068,32 @@ function attachUI(media, retryCount = 0) {
     if (isAutoScanMode && media.tagName !== 'VIDEO') {
         autoScanObserver.observe(media); 
     } else {
-        if (wrapper && !wrapper.querySelector('.veritai-check-btn')) {
+        if (wrapper && !getCheckButton(media)) {
             const btn = document.createElement("button");
             btn.innerText = "🔍 검사";
             btn.className = "veritai-check-btn";
+            btn.dataset.veritaiFor = getMediaId(media);
             btn.addEventListener("click", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                media.dataset.veritaiUserRequest = "true";
                 startInspection(media);
             });
             wrapper.appendChild(btn);
+            positionOverlay(btn, media, 8);
         }
     }
 }
 
 function clearAllUI() {
     document.querySelectorAll('img, video').forEach(media => {
-        media.style.border = "none";
-        media.style.boxShadow = "none"; 
+        if (media.dataset.veritaiId) clearMediaHighlight(media);
         delete media.dataset.veritaiScanned;
         delete media.dataset.veritaiAttached;
         delete media.dataset.veritaiScanKey;
-        const wrapper = ensureWrapper(media);
-        if (wrapper) {
-            const container = wrapper.querySelector('.veritai-ui-container');
-            if (container) container.remove();
-            const btn = wrapper.querySelector('.veritai-check-btn');
-            if (btn) btn.remove();
-        }
+        delete media.dataset.veritaiFadedOut;
     });
+    document.querySelectorAll('veritai-host, .veritai-check-btn').forEach(el => el.remove());
     scannedMediaKeys.clear();
     closeAllReportBoxes(true); 
     const hint = document.getElementById('veritai-mini-hint');
@@ -957,7 +1103,7 @@ function clearAllUI() {
     document.querySelectorAll('.veritai-standalone-modal').forEach(m => m.remove());
 }
 
-chrome.storage.local.get(['isSystemOn', 'isAutoScanOn', 'isCleanUIMode'], (result) => {
+chrome.storage.local.get(SETTING_KEYS, (result) => {
     isSystemOn = result.isSystemOn !== false;
     isAutoScanMode = result.isAutoScanOn || false;
     isCleanUIMode = result.isCleanUIMode || false;
@@ -965,13 +1111,15 @@ chrome.storage.local.get(['isSystemOn', 'isAutoScanOn', 'isCleanUIMode'], (resul
         if (isSystemOn) {
             injectDropzone(); 
             document.querySelectorAll('img, video').forEach(media => attachUI(media));
-            domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: [ "src","class", "style", "open", "aria-hidden", "aria-modal"] });
+            domObserver.observe(document.body, DOM_OBSERVER_OPTIONS);
         }
     }, 500);
 });
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local') {
+        if (!SETTING_KEYS.some(key => key in changes)) return;
+
         let modeChanged = false;
         
         if (changes.isSystemOn) isSystemOn = changes.isSystemOn.newValue;
@@ -990,14 +1138,13 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
                         if (!readDeepfakeFlag(data.result)) {
                             const wrapper = ensureWrapper(media);
                             if (wrapper) {
-                                const shadowHost = wrapper.querySelector('veritai-host');
-                                const uiContainer = shadowHost ? shadowHost.shadowRoot.querySelector('.veritai-ui-container') : wrapper.querySelector('.veritai-ui-container');
-                                
+                                const uiContainer = getUIContainer(media);
+
                                 if (isCleanUIMode) {
                                     if (uiContainer) {
                                         uiContainer.style.transition = "opacity 0.5s ease-out";
                                         uiContainer.style.opacity = "0";
-                                        setTimeout(() => { if (uiContainer) uiContainer.style.display = "none"; }, 300);
+                                        setTimeout(() => { if (uiContainer && isCleanUIMode) uiContainer.style.display = "none"; }, 300);
                                     }
                                 } else {
                                     delete media.dataset.veritaiFadedOut;
@@ -1028,40 +1175,36 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
             if (modeChanged) {
                 if (!isAutoScanMode) {
                     while (pendingInspectionQueue.length > 0) {
-                        pendingInspectionQueue.shift().reject(new Error("수동 모드 전환으로 인한 취소"));
+                        const cancelErr = new Error("수동 모드 전환으로 인한 취소");
+                        cancelErr.isCancelled = true;        
+                        pendingInspectionQueue.shift().reject(cancelErr);
                     }
                 }
 
                 document.querySelectorAll('img, video').forEach(media => {
                     if (!isAutoScanMode && media.dataset.veritaiScanned === "true") {
-                        const wrapper = ensureWrapper(media);
-                        if (wrapper) {
-                            const badge = wrapper.querySelector('.veritai-status-badge');
-                            if (badge && badge.innerHTML.includes("veritai-spin")) {
-                                delete media.dataset.veritaiScanned;
-                                if (media.dataset.veritaiScanKey) {
-                                    scannedMediaKeys.delete(media.dataset.veritaiScanKey);
-                                    delete media.dataset.veritaiScanKey;
-                                }
-                                const container = wrapper.querySelector('.veritai-ui-container');
-                                if (container) container.remove();
+                        const badge = getBadge(media);
+                        if (badge && badge.innerHTML.includes("veritai-spin")) {
+                            delete media.dataset.veritaiScanned;
+                            if (media.dataset.veritaiScanKey) {
+                                scannedMediaKeys.delete(media.dataset.veritaiScanKey);
+                                delete media.dataset.veritaiScanKey;
                             }
+                            const host = getShadowHost(media);
+                            if (host) host.remove();
                         }
                     }
 
                     if (!media.dataset.veritaiScanned) {
-                        const wrapper = ensureWrapper(media);
-                        if (wrapper) {
-                            const btn = wrapper.querySelector('.veritai-check-btn');
-                            if (btn) btn.remove();
-                        }
+                        const btn = getCheckButton(media);
+                        if (btn) btn.remove();
                         autoScanObserver.unobserve(media);
                         delete media.dataset.veritaiAttached;
                     }
                 });
             }
             document.querySelectorAll('img, video').forEach(media => attachUI(media));
-            domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "class"] });
+            domObserver.observe(document.body, DOM_OBSERVER_OPTIONS);
         }
     }
 });
@@ -1072,7 +1215,7 @@ document.addEventListener('keydown', (e) => {
     }
     
     if (e.altKey && e.key.toLowerCase() === 'v') {
-        const badges = Array.from(document.querySelectorAll('.veritai-status-badge'));
+        const badges = getAllBadges();
         const fakeBadges = badges.filter(badge => badge.innerText.includes('조작 의심'));
         
         if (fakeBadges.length === 0) {
@@ -1100,7 +1243,7 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('click', (e) => {
     if (!e.isTrusted) return; 
-    const customUIs = document.querySelectorAll('.veritai-check-btn, .veritai-status-badge');
+    const customUIs = [...document.querySelectorAll('.veritai-check-btn'), ...getAllBadges()];
     if (customUIs.length === 0) return; 
     for (let ui of customUIs) {
         const rect = ui.getBoundingClientRect();
@@ -1114,8 +1257,64 @@ document.addEventListener('click', (e) => {
     }
 }, true);
 
+let dragCounter = 0;
+let dropzoneListenersAttached = false;
+
+function getDropzoneElements() {
+    return {
+        miniHint: document.getElementById('veritai-mini-hint'),
+        wrapper: document.getElementById('veritai-dropzone-wrapper'),
+    };
+}
+
+function hideDropzoneUI() {
+    const { miniHint, wrapper } = getDropzoneElements();
+    if (!wrapper) return;
+    wrapper.style.borderColor = '#3b82f6';
+    wrapper.style.background = 'rgba(30, 41, 59, 0.95)';
+    wrapper.style.opacity = '0';
+    wrapper.style.transform = 'translateY(10px)';
+    setTimeout(() => {
+        if (dragCounter === 0) {
+            wrapper.style.display = 'none';
+            if (miniHint) miniHint.style.display = 'flex';
+        }
+    }, 200);
+}
+
+function attachDropzoneListeners() {
+    if (dropzoneListenersAttached) return;
+    dropzoneListenersAttached = true;
+
+    window.addEventListener('dragenter', (e) => {
+        const { miniHint, wrapper } = getDropzoneElements();
+        if (!wrapper) return;
+        if (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes("text/uri-list") || e.dataTransfer.types.includes("text/html")) {
+            e.preventDefault();
+            dragCounter++;
+            if (dragCounter === 1) {
+                if (miniHint) miniHint.style.display = 'none';
+                wrapper.style.display = 'flex';
+                requestAnimationFrame(() => {
+                    wrapper.style.opacity = '1';
+                    wrapper.style.transform = 'translateY(0)';
+                });
+            }
+        }
+    });
+
+    window.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        if (dragCounter === 0) return;
+        dragCounter--;
+        if (dragCounter === 0) hideDropzoneUI();
+    });
+}
+
 function injectDropzone() {
+    attachDropzoneListeners();
     if (document.getElementById('veritai-mini-hint')) return;
+    dragCounter = 0;
 
     const miniHint = document.createElement('div');
     miniHint.id = 'veritai-mini-hint';
@@ -1131,42 +1330,6 @@ function injectDropzone() {
     wrapper.appendChild(dz);
     document.body.appendChild(wrapper);
 
-    let dragCounter = 0;
-
-    const hideDropzoneUI = () => {
-        wrapper.style.borderColor = '#3b82f6';
-        wrapper.style.background = 'rgba(30, 41, 59, 0.95)';
-        wrapper.style.opacity = '0';
-        wrapper.style.transform = 'translateY(10px)';
-        setTimeout(() => { 
-            if (dragCounter === 0) {
-                wrapper.style.display = 'none'; 
-                miniHint.style.display = 'flex'; 
-            }
-        }, 200);
-    };
-
-    window.addEventListener('dragenter', (e) => {
-        if (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes("text/uri-list") || e.dataTransfer.types.includes("text/html")) {
-            e.preventDefault();
-            dragCounter++;
-            if (dragCounter === 1) {
-                miniHint.style.display = 'none'; 
-                wrapper.style.display = 'flex';
-                requestAnimationFrame(() => { 
-                    wrapper.style.opacity = '1'; 
-                    wrapper.style.transform = 'translateY(0)'; 
-                });
-            }
-        }
-    });
-
-    window.addEventListener('dragleave', (e) => {
-        e.preventDefault();
-        dragCounter--;
-        if (dragCounter === 0) hideDropzoneUI(); 
-    });
-
     wrapper.addEventListener('dragover', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1177,9 +1340,9 @@ function injectDropzone() {
 
     wrapper.addEventListener('drop', (e) => {
         e.preventDefault();
-        e.stopPropagation(); 
+        e.stopPropagation();
         dragCounter = 0;
-        hideDropzoneUI(); 
+        hideDropzoneUI();
 
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const file = e.dataTransfer.files[0];
@@ -1260,10 +1423,12 @@ function recordInspectionStat(isFake) {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "clear_cache_and_rescan") {
+        scanCache.forEach(releaseFrameUrl);
         scanCache.clear();      
         scannedMediaKeys.clear(); 
         clearAllUI();            
         if (isSystemOn) {
+            injectDropzone();
             document.querySelectorAll('img, video').forEach(media => attachUI(media));
         }
         sendResponse({ success: true });
@@ -1276,7 +1441,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (foundMedia && isVisibleMedia(foundMedia)) {
             foundMedia.scrollIntoView({ behavior: 'smooth', block: 'center' });
             foundMedia.dataset.forceInspect = "true"; 
-            startInspection(foundMedia);
+            const foundUrl = foundMedia.currentSrc || foundMedia.src;
+            const isFinishedVideo = foundMedia.tagName === "VIDEO" && foundMedia.dataset.veritaiScanned === "true" && foundUrl && scanCache.has(foundUrl);
+            if (isFinishedVideo) reinspectMedia(foundMedia);
+            else startInspection(foundMedia);
         } else {
             analyzeStandaloneMedia(targetSrc, request.mediaType === "video");
         }

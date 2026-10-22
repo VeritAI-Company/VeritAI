@@ -1,3 +1,25 @@
+const MAX_UPLOAD_SIZE = 1280;
+
+async function limitImageSize(blob) {
+    const bitmap = await createImageBitmap(blob);
+    const { width, height } = bitmap;
+    if (width <= MAX_UPLOAD_SIZE && height <= MAX_UPLOAD_SIZE) {
+        bitmap.close();
+        return blob;
+    }
+    const ratio = Math.min(MAX_UPLOAD_SIZE / width, MAX_UPLOAD_SIZE / height);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const resized = await new Promise(resolve => canvas.toBlob(resolve, "image/webp", 0.8));
+    canvas.width = 0;
+    canvas.height = 0;
+    if (!resized) throw new Error("이미지 축소 실패");
+    return resized;
+}
+
 export async function captureImageBlob(imageUrl) {
     if (!imageUrl) throw new Error("이미지 주소가 없습니다.");
     return new Promise((resolve, reject) => {
@@ -12,10 +34,13 @@ export async function captureImageBlob(imageUrl) {
                     if (fbResponse && fbResponse.dataUrl) {
                         try {
                             const res = await fetch(fbResponse.dataUrl);
-                            resolve(await res.blob());
+                            resolve(await limitImageSize(await res.blob()));
                         } catch (e) { reject(new Error("우회 캡처 실패")); }
                     } else {
-                        reject(new Error(response?.error || fbResponse?.error || "CORS 보안 차단됨"));
+                        const blockedErr = new Error("CORS 보안 차단됨");
+                        blockedErr.detail = fbResponse?.error || response?.error || "";
+                        console.warn("[VeritAI] 이미지를 가져오지 못했습니다:", blockedErr.detail);
+                        reject(blockedErr);
                     }
                 });
             }
