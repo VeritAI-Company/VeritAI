@@ -45,10 +45,10 @@ class DetectionControllerTest {
 
         when(processingService.normalizeAnalysisMode("face_crop_only")).thenReturn("face_crop_only");
         when(processingService.recommendedPollDelayMs()).thenReturn(1000);
-        when(requestRepository.findFirstByFileHashAndAnalysisModeAndStatusInOrderByCreatedAtDesc(
+        when(requestRepository.findFirstByFileHashAndAnalysisModeAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
                 any(), eq("face_crop_only"), anyCollection()
         )).thenReturn(Optional.empty());
-        when(requestRepository.save(any(DetectionRequestEntity.class))).thenAnswer(invocation -> {
+        when(requestRepository.saveAndFlush(any(DetectionRequestEntity.class))).thenAnswer(invocation -> {
             DetectionRequestEntity entity = invocation.getArgument(0);
             ReflectionTestUtils.setField(entity, "id", 42L);
             return entity;
@@ -59,7 +59,8 @@ class DetectionControllerTest {
                 resultRepository,
                 processingService,
                 uploadService(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new AppProperties()
         );
 
         MockMultipartFile file = new MockMultipartFile(
@@ -89,11 +90,16 @@ class DetectionControllerTest {
         assertThat(body.getMessage()).isEqualTo("Analysis request queued.");
         assertThat(body.getResult()).isNull();
         assertThat(body.getRetryAfterMs()).isEqualTo(1000);
+        assertThat(new ObjectMapper().convertValue(body, Map.class).keySet())
+                .containsExactlyInAnyOrder("requestId", "status", "message", "result", "retryAfterMs");
 
         ArgumentCaptor<DetectionRequestEntity> requestCaptor = ArgumentCaptor.forClass(DetectionRequestEntity.class);
-        verify(requestRepository).save(requestCaptor.capture());
+        verify(requestRepository).saveAndFlush(requestCaptor.capture());
         DetectionRequestEntity saved = requestCaptor.getValue();
         assertThat(saved.getFileHash()).isNotBlank();
+        assertThat(saved.getDedupKey()).hasSize(64);
+        assertThat(saved.getModelVersion()).isEqualTo("default");
+        assertThat(saved.getPipelineVersion()).isEqualTo("v1");
         assertThat(saved.getAnalysisMode()).isEqualTo("face_crop_only");
         assertThat(saved.getStatus()).isEqualTo(DetectionProcessingService.STATUS_QUEUED);
 
@@ -113,7 +119,7 @@ class DetectionControllerTest {
 
         when(processingService.normalizeAnalysisMode("face_crop_only")).thenReturn("face_crop_only");
         when(processingService.recommendedPollDelayMs()).thenReturn(1000);
-        when(requestRepository.findFirstByFileHashAndAnalysisModeAndStatusInOrderByCreatedAtDesc(
+        when(requestRepository.findFirstByFileHashAndAnalysisModeAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
                 any(), eq("face_crop_only"), anyCollection()
         )).thenReturn(Optional.of(existing));
         when(resultRepository.findByRequestId(10L)).thenReturn(Optional.empty());
@@ -123,7 +129,8 @@ class DetectionControllerTest {
                 resultRepository,
                 processingService,
                 uploadService(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new AppProperties()
         );
 
         ResponseEntity<?> response = controller.createDetection(
@@ -141,6 +148,7 @@ class DetectionControllerTest {
         assertThat(body.getMessage()).isEqualTo("Duplicate analysis already queued.");
 
         verify(requestRepository, never()).save(any());
+        verify(requestRepository, never()).saveAndFlush(any());
         verify(processingService, never()).enqueue(any(), any(), any());
     }
 
@@ -152,10 +160,10 @@ class DetectionControllerTest {
 
         when(processingService.normalizeAnalysisMode("face_crop_only")).thenReturn("face_crop_only");
         when(processingService.recommendedPollDelayMs()).thenReturn(5000);
-        when(requestRepository.findFirstByFileHashAndAnalysisModeAndStatusInOrderByCreatedAtDesc(
+        when(requestRepository.findFirstByFileHashAndAnalysisModeAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
                 any(), eq("face_crop_only"), anyCollection()
         )).thenReturn(Optional.empty());
-        when(requestRepository.save(any(DetectionRequestEntity.class))).thenAnswer(invocation -> {
+        when(requestRepository.saveAndFlush(any(DetectionRequestEntity.class))).thenAnswer(invocation -> {
             DetectionRequestEntity entity = invocation.getArgument(0);
             ReflectionTestUtils.setField(entity, "id", 43L);
             return entity;
@@ -169,7 +177,8 @@ class DetectionControllerTest {
                 resultRepository,
                 processingService,
                 uploadService(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new AppProperties()
         );
 
         ResponseEntity<?> response = controller.createDetection(
@@ -188,7 +197,8 @@ class DetectionControllerTest {
         assertThat(body.getMessage()).isEqualTo("Detection queue is full. Please retry later.");
         assertThat(body.getRetryAfterMs()).isEqualTo(5000);
 
-        verify(requestRepository, atLeast(2)).save(any(DetectionRequestEntity.class));
+        verify(requestRepository).saveAndFlush(any(DetectionRequestEntity.class));
+        verify(requestRepository).save(any(DetectionRequestEntity.class));
     }
 
     @Test
@@ -202,7 +212,8 @@ class DetectionControllerTest {
                 resultRepository,
                 processingService,
                 uploadService(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new AppProperties()
         );
 
         MockMultipartFile file = new MockMultipartFile(
@@ -229,6 +240,7 @@ class DetectionControllerTest {
         assertThat(body.getResult()).isNull();
 
         verify(requestRepository, never()).save(any());
+        verify(requestRepository, never()).saveAndFlush(any());
         verify(processingService, never()).enqueue(any(), any(), any());
     }
 
@@ -250,14 +262,16 @@ class DetectionControllerTest {
         second.setStatus(DetectionProcessingService.STATUS_FAILED);
         second.setFailureMessage("AI server connection or timeout failure: timeout");
 
-        when(requestRepository.findAllById(List.of(1L, 99L, 2L))).thenReturn(List.of(second, first));
+        when(requestRepository.findAllById(anyCollection())).thenReturn(List.of(second, first));
+        when(resultRepository.findByRequestIdIn(anyCollection())).thenReturn(List.of());
 
         DetectionController controller = new DetectionController(
                 requestRepository,
                 resultRepository,
                 processingService,
                 uploadService(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new AppProperties()
         );
 
         ResponseEntity<?> response = controller.getDetectionStatuses(List.of(1L, 99L, 2L));
@@ -271,8 +285,10 @@ class DetectionControllerTest {
         assertThat(items.get(1).getRequestId()).isEqualTo(2L);
         assertThat(items.get(1).getMessage()).isEqualTo("AI server connection or timeout failure: timeout");
 
-        verify(requestRepository).findAllById(List.of(1L, 99L, 2L));
+        verify(requestRepository).findAllById(anyCollection());
         verify(requestRepository, never()).findById(any());
+        verify(resultRepository).findByRequestIdIn(anyCollection());
+        verify(resultRepository, never()).findByRequestId(any());
     }
 
     private MockMultipartFile pngFile() {
