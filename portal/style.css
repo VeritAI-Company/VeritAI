@@ -109,6 +109,7 @@ main { max-width: 480px; margin: 0 auto; }
 
 .face-list { display: flex; flex-direction: column; gap: 8px; }
 .face-item { padding: 12px 14px; }
+.face-toggle { background: none; border: none; color: #93C5FD; font-size: 13px; padding: 6px 0; cursor: pointer; }
 .face-title { font-weight: 700; color: var(--warn); margin-bottom: 8px; font-size: 14px; }
 .face-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 13px; color: #CBD5E1; }
 .face-grid b { color: var(--text); font-weight: 600; }

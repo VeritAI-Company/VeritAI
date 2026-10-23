@@ -1,4 +1,4 @@
-import { API_URL, FEEDBACK_URL, MAX_CONCURRENT_INSPECTIONS, MAX_CACHE_SIZE, GLOBAL_AD_SELECTOR } from './config/constants';
+import { FEEDBACK_URL, MAX_CONCURRENT_INSPECTIONS, MAX_CACHE_SIZE, GLOBAL_AD_SELECTOR } from './config/constants';
 import { injectCSS, VERITAI_CORE_CSS } from './ui/styles.js';
 import { captureImageBlob, captureVideoBlob } from './core/capture.js';
 import { sendToBackend, clearPendingPolls } from './core/network.js';
@@ -168,6 +168,167 @@ function readDeepfakeFlag(result) {
     return Boolean(result.isDeepfake ?? result.deepfake);
 }
 
+function getFaceFakeProb(face) {
+    const value = face?.cnn?.fakeProbability ?? face?.fakeProbability;
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+const FACE_CAUTION_MIN = 0.3;
+const FACE_FAKE_MIN = 0.5;
+const FACE_DETECTION_MIN = 0.5;
+
+function getFaceColor(prob) {
+    if (prob == null) return "#94a3b8";
+    if (prob >= FACE_FAKE_MIN) return "#ef4444";
+    if (prob >= FACE_CAUTION_MIN) return "#f59e0b";
+    return "#10b981";
+}
+
+function selectVisibleFaces(faces, showAll) {
+    const entries = faces.map((face, index) => ({ face, index }));
+    if (showAll) return { visible: entries, hidden: 0 };
+    let top = null;
+    entries.forEach(entry => {
+        const prob = getFaceFakeProb(entry.face);
+        if (prob != null && (!top || prob > getFaceFakeProb(top.face))) top = entry;
+    });
+    const visible = entries.filter(entry => {
+        const det = entry.face.detectionConfidence;
+        return entry === top || typeof det !== 'number' || det >= FACE_DETECTION_MIN;
+    });
+    if (visible.length === 0 && entries.length > 0) visible.push(entries[0]);
+    return { visible, hidden: entries.length - visible.length };
+}
+
+function pickHeatmapFace(result, faces) {
+    const views = Array.isArray(result?.cnn?.views) ? result.cnn.views : [];
+    if (views.length > 0) {
+        const best = views.reduce((a, b) => ((b.fakeProbability ?? 0) > (a.fakeProbability ?? 0) ? b : a));
+        if (best.name === 'full') return null;
+        const match = /^face_(\d+)$/.exec(best.name || '');
+        if (match && faces[Number(match[1]) - 1]) return faces[Number(match[1]) - 1];
+    }
+    let target = null;
+    let maxScore = -1;
+    faces.forEach(face => {
+        const score = getFaceFakeProb(face) ?? -1;
+        if (score > maxScore) { maxScore = score; target = face; }
+    });
+    if (target) return target;
+    return faces.reduce((a, b) => ((b.detectionConfidence ?? 0) > (a?.detectionConfidence ?? -1) ? b : a), null);
+}
+
+function getOwnerMedia(ui) {
+    const host = ui.classList.contains('veritai-check-btn') ? ui : ui.getRootNode()?.host;
+    const id = host?.dataset?.veritaiFor;
+    return id ? document.querySelector(`img[data-veritai-id="${id}"], video[data-veritai-id="${id}"]`) : null;
+}
+
+function pickTopmostUI(hits, x, y) {
+    if (hits.length === 1) return hits[0];
+    const stack = document.elementsFromPoint(x, y);
+    let best = hits[hits.length - 1];
+    let bestRank = Infinity;
+    hits.forEach(ui => {
+        const media = getOwnerMedia(ui);
+        const rank = media ? stack.indexOf(media) : -1;
+        if (rank >= 0 && rank < bestRank) { bestRank = rank; best = ui; }
+    });
+    return best;
+}
+
+function isSameSpot(a, b) {
+    const ra = a.getBoundingClientRect();
+    const rb = b.getBoundingClientRect();
+    if (!ra.width || !rb.width) return false;
+    return Math.abs(ra.left - rb.left) < 4 && Math.abs(ra.top - rb.top) < 4
+        && Math.abs(ra.width - rb.width) < 4 && Math.abs(ra.height - rb.height) < 4;
+}
+
+function rectArea(rect) {
+    return Math.max(0, rect.width) * Math.max(0, rect.height);
+}
+
+function isBehind(other, media) {
+    const mr = media.getBoundingClientRect();
+    const or = other.getBoundingClientRect();
+    if (!mr.width || !or.width) return false;
+    const sameSpot = isSameSpot(other, media);
+    const cx = mr.left + mr.width / 2;
+    const cy = mr.top + mr.height / 2;
+    if (!sameSpot && (cx < or.left || cx > or.right || cy < or.top || cy > or.bottom)) return false;
+    const inViewport = cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight;
+    const stack = inViewport ? document.elementsFromPoint(cx, cy) : [];
+    const mediaRank = stack.indexOf(media);
+    const otherRank = stack.indexOf(other);
+    if (mediaRank !== -1 && otherRank !== -1) return otherRank > mediaRank;
+    if (mediaRank !== -1) return true;
+    if (otherRank !== -1) return false;
+    if (sameSpot) return Boolean(other.compareDocumentPosition(media) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return rectArea(or) > rectArea(mr);
+}
+
+function suppressMedia(owner) {
+    const btn = getCheckButton(owner);
+    if (btn) btn.remove();
+    owner.dataset.veritaiSuppressed = "true";
+    autoScanObserver.unobserve(owner);
+}
+
+function suppressOverlappingButtons(media) {
+    document.querySelectorAll('.veritai-check-btn').forEach(btn => {
+        const owner = getOwnerMedia(btn);
+        if (!owner || owner === media || !isBehind(owner, media)) return;
+        suppressMedia(owner);
+    });
+}
+
+function isCoveredByOtherMedia(media) {
+    const mr = media.getBoundingClientRect();
+    if (!mr.width) return false;
+    return Array.from(document.querySelectorAll('img, video')).some(other => {
+        if (other === media || !other.isConnected) return false;
+        const or = other.getBoundingClientRect();
+        if (!or.width || or.right < mr.left || or.left > mr.right || or.bottom < mr.top || or.top > mr.bottom) return false;
+        if (!isVisibleMedia(other)) return false;
+        return isBehind(media, other);
+    });
+}
+
+function hideMediaUI(media) {
+    removeMediaUI(media);
+    clearMediaHighlight(media);
+    media.dataset.veritaiSuppressed = "true";
+    autoScanObserver.unobserve(media);
+}
+
+function hideCoveredUIs(topMedia) {
+    const owners = new Set();
+    document.querySelectorAll('veritai-host, .veritai-check-btn').forEach(el => {
+        const id = el.dataset.veritaiFor;
+        if (!id || id === topMedia.dataset.veritaiId) return;
+        const owner = document.querySelector(`img[data-veritai-id="${id}"], video[data-veritai-id="${id}"]`);
+        if (owner) owners.add(owner);
+    });
+    owners.forEach(owner => {
+        if (owner.dataset.forceInspect === "true") return;
+        if (isBehind(owner, topMedia)) hideMediaUI(owner);
+    });
+}
+
+function isBehindInspectedMedia(media) {
+    return Array.from(document.querySelectorAll('veritai-host')).some(host => {
+        const id = host.dataset.veritaiFor;
+        if (!id || id === media.dataset.veritaiId) return false;
+        const inspected = document.querySelector(`img[data-veritai-id="${id}"], video[data-veritai-id="${id}"]`);
+        return Boolean(inspected && inspected.isConnected && isBehind(media, inspected));
+    });
+}
+
+function isUserRequested(media) {
+    return media.dataset.veritaiUserRequest === "true" || media.dataset.forceInspect === "true";
+}
+
 function getInspectionPriority(media) {
     if (!media || !media.isConnected) return -1;
     const rect = media.getBoundingClientRect();
@@ -189,7 +350,7 @@ function runWithInspectionLimit(task, media = null) {
 function drainInspectionQueue() {
     while (activeInspectionCount < MAX_CONCURRENT_INSPECTIONS && pendingInspectionQueue.length > 0) {
         const next = pendingInspectionQueue.shift();
-        if (next.media && (!next.media.isConnected || !shouldInspectMedia(next.media))) {
+        if (next.media && (!next.media.isConnected || (!isUserRequested(next.media) && !shouldInspectMedia(next.media)))) {
             next.reject(new Error("검사 대상이 화면에서 사라졌습니다."));
             continue;
         }
@@ -203,6 +364,7 @@ function drainInspectionQueue() {
 
 function updateStatusBadge(media, status, data = null) {
     if (!isSystemOn && media.dataset.forceInspect !== "true") return; 
+    if (media.dataset.veritaiSuppressed === "true" && media.dataset.forceInspect !== "true") return;
     if (status === "real" && isCleanUIMode && media.dataset.veritaiFadedOut === "true") return;
     const wrapper = ensureWrapper(media);
     if (!wrapper) return;
@@ -367,15 +529,25 @@ function updateStatusBadge(media, status, data = null) {
             const faces = result.faces || [];
             const isVideoMedia = media.tagName === "VIDEO";
 
-            const faceText = faces.length === 0 ?
-                "<div style='text-align:center; color:#94a3b8; padding: 10px 0; font-size: 11px;'>전체 이미지 분석 완료</div>" :
-                faces.slice(0, 3).map((f, i) => {
+            let showAllFaces = false;
+            const buildFaceListHTML = () => {
+                if (faces.length === 0) {
+                    return "<div style='text-align:center; color:#94a3b8; padding: 10px 0; font-size: 11px;'>전체 이미지 분석 완료</div>";
+                }
+                const { visible, hidden } = selectVisibleFaces(faces, showAllFaces);
+                const cards = visible.map(({ face: f, index: i }) => {
                     const bbox = f.bbox || {};
                     const quality = f.quality || {};
                     const detConf = ((f.detectionConfidence || f.score || 0) * 100).toFixed(1);
+                    const faceProb = getFaceFakeProb(f);
+                    const faceColor = getFaceColor(faceProb);
+                    const probText = faceProb == null ? '-' : `${(faceProb * 100).toFixed(1)}%`;
                     return `
                     <div style="background: rgba(0, 0, 0, 0.2); padding: 8px 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="color:#fbbf24; font-weight:bold; margin-bottom: 6px; font-size: 11.5px;">[얼굴 ${i + 1}]</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                            <span style="color:${faceColor}; font-weight:bold; font-size: 11.5px;">[얼굴 ${i + 1}]</span>
+                            <span style="color:${faceColor}; font-weight:bold; font-size: 11.5px;">조작 확률 ${probText}</span>
+                        </div>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; color: #cbd5e1; font-size: 11px; line-height: 1.3;">
                             <div>• 유형: <span style="color:#fff">${escapeHTML(f.faceMode) || '?'}</span></div>
                             <div>• 검출률: <span style="color:#fff">${detConf}%</span></div>
@@ -384,6 +556,11 @@ function updateStatusBadge(media, status, data = null) {
                         </div>
                     </div>`;
                 }).join("");
+                let toggle = '';
+                if (hidden > 0) toggle = `<div class="veritai-face-toggle" role="button" tabindex="0" style="text-align:center; color:#93c5fd; font-size: 11px; cursor:pointer; padding: 2px 0 6px;">검출 신뢰도 낮은 얼굴 ${hidden}개 숨김 · 모두 보기</div>`;
+                else if (showAllFaces && selectVisibleFaces(faces, false).hidden > 0) toggle = `<div class="veritai-face-toggle" role="button" tabindex="0" style="text-align:center; color:#93c5fd; font-size: 11px; cursor:pointer; padding: 2px 0 6px;">주요 얼굴만 보기</div>`;
+                return cards + toggle;
+            };
 
             const detailsBox = document.createElement('div');
             detailsBox.className = `veritai-details-box unpinned ${status === "fake" ? "fake-border" : "real-border"}`;
@@ -407,7 +584,7 @@ function updateStatusBadge(media, status, data = null) {
             ${result.heatmapBase64 ? 'AI 분석 근거 보기' : '정상 (조작 특이점 없음)'}
         </button>
     </div>
-    <div style="position: relative; width: 100%; height: 160px; background: #0f172a; border-radius: 4px; overflow: hidden; border: 1px solid #333; display: flex; align-items: center; justify-content: center;">
+    <div style="position: relative; width: 100%; height: 220px; background: #0f172a; border-radius: 4px; overflow: hidden; border: 1px solid #333; display: flex; align-items: center; justify-content: center;">
         <canvas id="veritai-bbox-canvas" style="position: absolute; max-width: 100%; max-height: 100%; object-fit: contain; z-index: 2;"></canvas>
         <canvas id="veritai-heatmap-canvas" style="display: none; position: absolute; max-width: 100%; max-height: 100%; object-fit: contain; z-index: 1;"></canvas>
     </div>
@@ -419,7 +596,7 @@ function updateStatusBadge(media, status, data = null) {
     </div>
 </div>
 <div style="margin:12px 0; border-top:1px dashed rgba(255,255,255,0.2);"></div>
-${faceText}
+<div class="veritai-face-list">${buildFaceListHTML()}</div>
 <div style="margin-top: 15px; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px;">
     ${isVideoMedia ? `<button class="veritai-reinspect-btn" style="font-size: 11px; padding: 4px 8px; cursor: pointer; background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 4px;">🔄 현재 장면 다시 검사</button>` : ''}
     <button class="veritai-feedback-btn" style="font-size: 11px; padding: 4px 8px; cursor: pointer; background: rgba(255, 60, 60, 0.1); color: #ff6b6b; border: 1px solid rgba(255, 60, 60, 0.3); border-radius: 4px; transition: all 0.2s;">🚨 신고</button>
@@ -455,38 +632,74 @@ ${faceText}
                     imgObj.src = reportImageSrc; 
                 };
 
+                const drawFaceBoxes = () => {
+                    bCtx.clearRect(0, 0, bboxCanvas.width, bboxCanvas.height);
+                    bCtx.drawImage(imgObj, 0, 0);
+                    if (faces && faces.length > 0) {
+                        const stage = bboxCanvas.parentElement;
+                        const stageW = (stage && stage.clientWidth) || 230;
+                        const stageH = (stage && stage.clientHeight) || 220;
+                        const displayScale = Math.min(1, stageW / imgObj.width, stageH / imgObj.height);
+                        const lineWidth = Math.max(2, 2 / displayScale);
+                        const maxFont = 11 / displayScale;
+                        const minFont = 9 / displayScale;
+                        selectVisibleFaces(faces, showAllFaces).visible.forEach(({ face: f, index: i }) => {
+                            if (f.bbox && f.bbox.w > 0) {
+                                const color = getFaceColor(getFaceFakeProb(f));
+                                bCtx.lineWidth = lineWidth;
+                                bCtx.strokeStyle = color;
+                                bCtx.strokeRect(f.bbox.x, f.bbox.y, f.bbox.w, f.bbox.h);
+
+                                const label = String(i + 1);
+                                const fontSize = Math.round(Math.min(maxFont, Math.max(minFont, Math.min(f.bbox.w, f.bbox.h) * 0.35)));
+                                bCtx.font = `bold ${fontSize}px sans-serif`;
+                                const padX = Math.round(fontSize * 0.3);
+                                const badgeW = Math.round(bCtx.measureText(label).width + padX * 2);
+                                const badgeH = Math.round(fontSize * 1.2);
+                                const fitsInside = f.bbox.w >= badgeW * 2 && f.bbox.h >= badgeH * 2;
+                                let badgeX = f.bbox.x + lineWidth / 2;
+                                let badgeY = f.bbox.y + lineWidth / 2;
+                                if (!fitsInside) {
+                                    badgeX = Math.min(Math.max(0, f.bbox.x - lineWidth / 2), imgObj.width - badgeW);
+                                    badgeY = f.bbox.y - lineWidth / 2 - badgeH >= 0
+                                        ? f.bbox.y - lineWidth / 2 - badgeH
+                                        : Math.min(imgObj.height - badgeH, f.bbox.y + f.bbox.h + lineWidth / 2);
+                                }
+                                bCtx.fillStyle = color;
+                                bCtx.fillRect(badgeX, badgeY, badgeW, badgeH);
+                                bCtx.fillStyle = "#ffffff";
+                                bCtx.textBaseline = "middle";
+                                bCtx.fillText(label, badgeX + padX, badgeY + badgeH / 2);
+                                bCtx.textBaseline = "alphabetic";
+                            }
+                        });
+                    }
+                };
+
+                const faceListEl = detailsBox.querySelector('.veritai-face-list');
+                if (faceListEl) {
+                    const onToggle = (evt) => {
+                        if (!evt.target.closest('.veritai-face-toggle')) return;
+                        if (evt.type === 'keydown' && evt.key !== 'Enter' && evt.key !== ' ') return;
+                        evt.preventDefault();
+                        evt.stopPropagation();
+                        showAllFaces = !showAllFaces;
+                        faceListEl.innerHTML = buildFaceListHTML();
+                        if (imgObj.complete && imgObj.naturalWidth) drawFaceBoxes();
+                    };
+                    faceListEl.addEventListener('click', onToggle);
+                    faceListEl.addEventListener('keydown', onToggle);
+                }
+
                 imgObj.onload = () => {
                     bboxCanvas.width = imgObj.width;
                     bboxCanvas.height = imgObj.height;
                     heatmapCanvas.width = imgObj.width;
                     heatmapCanvas.height = imgObj.height;
-                    bCtx.drawImage(imgObj, 0, 0);
-                    
-                    if (faces && faces.length > 0) {
-                        faces.forEach((f, i) => {
-                            if (f.bbox && f.bbox.w > 0) {
-                                bCtx.lineWidth = Math.max(3, imgObj.width / 150);
-                                const isFake = (f.fakeProbability || f.confidence || 0) >= 0.5;
-                                bCtx.strokeStyle = isFake ? "#ef4444" : "#10b981"; 
-                                bCtx.fillStyle = isFake ? "rgba(239, 68, 68, 0.2)" : "rgba(16, 185, 129, 0.2)";
-                                bCtx.strokeRect(f.bbox.x, f.bbox.y, f.bbox.w, f.bbox.h);
-                                bCtx.fillRect(f.bbox.x, f.bbox.y, f.bbox.w, f.bbox.h);
-                                bCtx.font = `${Math.max(16, imgObj.width / 25)}px sans-serif`;
-                                bCtx.fillStyle = bCtx.strokeStyle;
-                                bCtx.fillText(`얼굴 ${i + 1}`, f.bbox.x, f.bbox.y - 5);
-                            }
-                        });
-                    }
+                    drawFaceBoxes();
 
                     if (result.heatmapBase64) {
-                        let bestFace = faces && faces.length > 0 ? faces[0] : null;
-                        let maxScore = -1;
-                        if (faces) {
-                            faces.forEach(f => {
-                                const score = f.fakeProbability || f.confidence || (f.detectionConfidence || 0);
-                                if (score > maxScore) { maxScore = score; bestFace = f; }
-                            });
-                        }
+                        const bestFace = pickHeatmapFace(result, faces || []);
                         const hmImg = new Image();
                         hmImg.onload = () => {
                             const drawHeatmap = (opacity) => {
@@ -853,7 +1066,11 @@ function reinspectMedia(media) {
 
 async function startInspection(media) {
     if (!isSystemOn && media.dataset.forceInspect !== "true") return;
-    if (media.dataset.forceInspect !== "true" && !shouldInspectMedia(media)) return; 
+    if (!isUserRequested(media) && !shouldInspectMedia(media)) return;
+    if (!isUserRequested(media) && (media.dataset.veritaiSuppressed === "true" || isCoveredByOtherMedia(media))) {
+        hideMediaUI(media);
+        return;
+    }
     if (media.dataset.veritaiScanned === "true") return;
 
     const mediaUrl = media.currentSrc || media.src;
@@ -876,6 +1093,7 @@ async function startInspection(media) {
 
     const checkBtn = getCheckButton(media);
     if (checkBtn) checkBtn.remove();
+    suppressOverlappingButtons(media);
 
     updateStatusBadge(media, "waiting");
 
@@ -989,6 +1207,7 @@ const domObserver = new MutationObserver((mutations) => {
     }
     if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
     observerDebounceTimer = setTimeout(() => {
+        if (!isSystemOn) { mutationQueue = []; return; }
         const mutationsToProcess = mutationQueue;
         mutationQueue = []; 
 
@@ -1015,6 +1234,7 @@ const domObserver = new MutationObserver((mutations) => {
                     delete target.dataset.veritaiScanned;
                     delete target.dataset.veritaiScanKey;
                     delete target.dataset.veritaiFadedOut;
+                    delete target.dataset.veritaiSuppressed;
                     removeMediaUI(target);
                     clearMediaHighlight(target);
                     if (target.tagName === 'IMG' && !target.complete) target.addEventListener('load', () => attachUI(target), { once: true });
@@ -1037,6 +1257,7 @@ function ensureWrapper(media) {
 }
 
 function attachUI(media, retryCount = 0) {
+    if (!isSystemOn) return;
     if (media.tagName === 'IMG' && !media.complete) {
         media.addEventListener('load', () => attachUI(media, retryCount), { once: true });
         return;
@@ -1046,6 +1267,13 @@ function attachUI(media, retryCount = 0) {
         if (retryCount < 5) setTimeout(() => attachUI(media, retryCount + 1), 300);
         return;
     }
+
+    if (media.dataset.veritaiSuppressed === "true" && media.dataset.forceInspect !== "true") return;
+    if (media.dataset.forceInspect !== "true" && isCoveredByOtherMedia(media)) {
+        hideMediaUI(media);
+        return;
+    }
+    hideCoveredUIs(media);
 
     const wrapper = ensureWrapper(media);
     const hasUI = Boolean(getCheckButton(media) || getShadowHost(media));
@@ -1068,6 +1296,10 @@ function attachUI(media, retryCount = 0) {
     if (isAutoScanMode && media.tagName !== 'VIDEO') {
         autoScanObserver.observe(media); 
     } else {
+        if (wrapper && !getCheckButton(media) && isBehindInspectedMedia(media)) {
+            media.dataset.veritaiSuppressed = "true";
+            return;
+        }
         if (wrapper && !getCheckButton(media)) {
             const btn = document.createElement("button");
             btn.innerText = "🔍 검사";
@@ -1092,6 +1324,7 @@ function clearAllUI() {
         delete media.dataset.veritaiAttached;
         delete media.dataset.veritaiScanKey;
         delete media.dataset.veritaiFadedOut;
+        delete media.dataset.veritaiSuppressed;
     });
     document.querySelectorAll('veritai-host, .veritai-check-btn').forEach(el => el.remove());
     scannedMediaKeys.clear();
@@ -1245,16 +1478,16 @@ document.addEventListener('click', (e) => {
     if (!e.isTrusted) return; 
     const customUIs = [...document.querySelectorAll('.veritai-check-btn'), ...getAllBadges()];
     if (customUIs.length === 0) return; 
-    for (let ui of customUIs) {
+    const hits = customUIs.filter(ui => {
         const rect = ui.getBoundingClientRect();
-        if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (ui.classList.contains('veritai-check-btn')) ui.click();
-            else if (ui.classList.contains('veritai-status-badge') && ui.onclick) ui.onclick(e);
-            return; 
-        }
-    }
+        return rect.width > 0 && e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+    });
+    if (hits.length === 0) return;
+    const ui = pickTopmostUI(hits, e.clientX, e.clientY);
+    e.preventDefault();
+    e.stopPropagation();
+    if (ui.classList.contains('veritai-check-btn')) ui.click();
+    else if (ui.classList.contains('veritai-status-badge') && ui.onclick) ui.onclick(e);
 }, true);
 
 let dragCounter = 0;
@@ -1372,7 +1605,10 @@ function analyzeStandaloneMedia(src, isVideo) {
     closeBtn.tabIndex = 0;
     closeBtn.setAttribute('role', 'button');
     closeBtn.setAttribute('aria-label', '모달 닫기');
-    const closeModal = () => modal.remove();
+    const closeModal = () => {
+        modal.remove();
+        if (src.startsWith('blob:')) URL.revokeObjectURL(src);
+    };
     closeBtn.onclick = closeModal;
     closeBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') closeModal(); };
 

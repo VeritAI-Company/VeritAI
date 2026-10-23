@@ -1,4 +1,6 @@
 # 🛡️ Deepfake Detection System
+
+> 최신 폴더 구조와 실행 방법(크롬 확장, PWA, 앱, 서버)은 `변경점문서/Readme1022.md`를 참고하세요.
 > **Capstone Design Project** > 브라우저 기반의 실시간 딥페이크 탐지 시스템 (Chrome Extension, Spring Boot, FastAPI)
 
 # 현재 이파일을 그대로 크롬원격으로 실행시키려면 frontend file에 있는 파일을 밖으로 뺴내야 실행이 가능합니다. 확인부탁드립니다

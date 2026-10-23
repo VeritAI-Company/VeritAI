@@ -1,25 +1,46 @@
 let offscreenTimeout = null;
-const OFFSCREEN_LIFETIME = 30000; 
+let offscreenCreating = null;
+let activeResizeCount = 0;
+const OFFSCREEN_LIFETIME = 30000;
+const RESIZE_TIMEOUT = 20000;
 
 async function setupOffscreen() {
     if (offscreenTimeout) {
         clearTimeout(offscreenTimeout);
-    }
-    
-    if (!(await chrome.offscreen.hasDocument())) {
-        await chrome.offscreen.createDocument({
-            url: 'frontend/offscreen.html', 
-            reasons: ['WORKERS'], 
-            justification: '이미지 리사이징 및 처리 연산'
-        });
-    }
-    
-    offscreenTimeout = setTimeout(async () => {
-        if (await chrome.offscreen.hasDocument()) {
-            await chrome.offscreen.closeDocument();
-        }
         offscreenTimeout = null;
+    }
+    if (await chrome.offscreen.hasDocument()) return;
+    // 여러 사진이 동시에 요청해도 문서는 한 번만 만든다
+    if (!offscreenCreating) {
+        offscreenCreating = chrome.offscreen.createDocument({
+            url: 'frontend/offscreen.html',
+            reasons: ['WORKERS'],
+            justification: '이미지 리사이징 및 처리 연산'
+        }).finally(() => { offscreenCreating = null; });
+    }
+    await offscreenCreating;
+}
+
+function scheduleOffscreenClose() {
+    if (offscreenTimeout) clearTimeout(offscreenTimeout);
+    // 처리 중인 요청이 있으면 닫지 않는다
+    if (activeResizeCount > 0) return;
+    offscreenTimeout = setTimeout(async () => {
+        offscreenTimeout = null;
+        if (activeResizeCount > 0) return;
+        if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument();
     }, OFFSCREEN_LIFETIME);
+}
+
+function resizeInOffscreen(request) {
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve({ success: false, error: "축소 응답 시간 초과" }), RESIZE_TIMEOUT);
+        chrome.runtime.sendMessage({ ...request, target: 'offscreen' }, (response) => {
+            clearTimeout(timer);
+            if (chrome.runtime.lastError) resolve({ success: false, error: chrome.runtime.lastError.message });
+            else resolve(response || { success: false, error: "응답 없음" });
+        });
+    });
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -39,11 +60,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } 
     
     else if (request.action === "resize_image") {
-        setupOffscreen().then(() => {
-            chrome.runtime.sendMessage(request, (response) => {
+        // 작업 창으로 넘긴 요청은 백그라운드가 다시 받지 않는다
+        if (request.target === 'offscreen') return false;
+        activeResizeCount += 1;
+        setupOffscreen()
+            .then(() => resizeInOffscreen(request))
+            .catch(err => ({ success: false, error: err.message }))
+            .then(response => {
+                activeResizeCount -= 1;
+                scheduleOffscreenClose();
                 sendResponse(response);
             });
-        });
         return true; 
     }
     else {
