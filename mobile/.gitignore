@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+android/
+ios/
+dist/
+web-build/
+*.apk
+*.aab
+npm-debug.log*
+
+# .env 는 비밀값이 아닌 동작 설정(EXPO_PUBLIC_USE_RN_FETCH)이라 팀 공유용으로 포함
+!.env

@@ -67,7 +67,6 @@ function ensureBatchPolling() {
 async function runBatchPollingLoop() {
     let delayMs = POLL_INITIAL_INTERVAL_MS;
     while (pendingDetectionPolls.size > 0) {
-        chrome.runtime.sendMessage({ action: "keep_alive" }, () => { chrome.runtime.lastError; });
         await delay(delayMs);
         const now = Date.now();
         const timedOut = [];

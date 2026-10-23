@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0F172A">
+  <link rel="icon" href="/icon-192x192.png">
+  <link rel="apple-touch-icon" href="/icon-192x192.png">
+  <title>VeritAI</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>VeritAI</h1>
+    <p class="subtitle">사진 속 얼굴의 딥페이크 조작 여부를 검사합니다</p>
+  </header>
+
+  <main>
+    <section id="view-start" class="view">
+      <div class="card start-card">
+        <div class="start-icon" aria-hidden="true">🛡️</div>
+        <p class="start-text">검사할 사진을 선택하세요</p>
+        <label class="btn btn-primary" for="input-camera">📷 사진 찍기</label>
+        <label class="btn btn-secondary" for="input-gallery">🖼 갤러리에서 선택</label>
+        <input id="input-camera" type="file" accept="image/*" capture="environment" hidden>
+        <input id="input-gallery" type="file" accept="image/*" hidden>
+      </div>
+      <p class="privacy-note">
+        선택한 사진은 최대 1280px로 줄여 분석 서버로만 전송되며, 서버에서 일정 기간 후 자동 삭제됩니다.
+      </p>
+    </section>
+
+    <section id="view-preview" class="view" hidden>
+      <div class="card">
+        <img id="preview-image" class="preview-image" alt="선택한 사진 미리보기">
+      </div>
+      <button id="btn-inspect" class="btn btn-primary" type="button">🔍 검사하기</button>
+      <button class="btn btn-ghost js-restart" type="button">다른 사진 선택</button>
+    </section>
+
+    <section id="view-loading" class="view" hidden>
+      <div class="card loading-card" role="status" aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="loading-text" class="loading-text">사진을 준비하는 중...</p>
+        <p class="loading-sub">사진에 따라 수 초 정도 걸릴 수 있습니다</p>
+      </div>
+    </section>
+
+    <section id="view-result" class="view" hidden>
+      <div id="verdict" class="verdict" role="status" aria-live="polite">
+        <span id="verdict-icon" class="verdict-icon" aria-hidden="true"></span>
+        <div>
+          <div id="verdict-title" class="verdict-title"></div>
+          <div id="verdict-detail" class="verdict-detail"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="stage-header">
+          <span id="stage-title" class="stage-title">감지 영역</span>
+          <button id="btn-heatmap" class="chip" type="button">AI 분석 근거 보기</button>
+        </div>
+        <canvas id="result-canvas" class="result-canvas"></canvas>
+        <div id="heatmap-controls" class="heatmap-controls" hidden>
+          <span class="range-label">원본</span>
+          <input id="heatmap-opacity" type="range" min="0" max="100" value="70" aria-label="히트맵 투명도">
+          <span class="range-label range-label-hot">히트맵</span>
+        </div>
+      </div>
+
+      <div id="face-list" class="face-list"></div>
+
+      <div class="card feedback-card">
+        <button id="btn-feedback-open" class="btn btn-ghost btn-small" type="button">🚨 결과가 틀렸나요? 신고하기</button>
+        <form id="feedback-form" class="feedback-form" hidden>
+          <label for="feedback-reason" class="feedback-label">어떤 부분이 잘못되었나요?</label>
+          <textarea id="feedback-reason" rows="3" maxlength="500" placeholder="예: 실제 사진인데 조작 의심으로 나왔어요"></textarea>
+          <div class="feedback-actions">
+            <button id="btn-feedback-cancel" class="btn btn-ghost btn-small" type="button">취소</button>
+            <button id="btn-feedback-submit" class="btn btn-danger btn-small" type="submit">제출</button>
+          </div>
+        </form>
+        <p id="feedback-status" class="feedback-status" hidden></p>
+      </div>
+
+      <button class="btn btn-primary js-restart" type="button">다른 사진 검사</button>
+      <p id="request-id" class="request-id"></p>
+    </section>
+
+    <section id="view-error" class="view" hidden>
+      <div class="card error-card" role="alert">
+        <div class="error-icon" aria-hidden="true">⚠️</div>
+        <p id="error-text" class="error-text"></p>
+      </div>
+      <button id="btn-retry" class="btn btn-primary" type="button">🔄 다시 시도</button>
+      <button class="btn btn-ghost js-restart" type="button">처음으로</button>
+    </section>
+  </main>
+
+  <footer id="pwa-status" class="pwa-status"></footer>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

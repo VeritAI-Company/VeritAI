@@ -2,10 +2,12 @@
   "name": "veritai",
   "version": "1.0.0",
   "description": "> **Capstone Design Project** > 브라우저 기반의 실시간 딥페이크 탐지 시스템 (Chrome Extension, Spring Boot, FastAPI)",
-  "main": "background.js",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build"
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "dev:portal": "vite --config vite.portal.config.js --host 127.0.0.1",
+    "build:portal": "vite build --config vite.portal.config.js",
+    "build:all": "npm run build && npm run build:portal"
   },
   "repository": {
     "type": "git",
@@ -20,7 +22,7 @@
   },
   "homepage": "https://github.com/VeritAI-Company/VeritAI#readme",
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.0.0-beta.33",
-    "vite": "^5.4.21"
+    "vite": "^5.4.21",
+    "vite-plugin-pwa": "^2.0.0"
   }
 }

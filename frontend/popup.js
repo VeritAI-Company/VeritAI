@@ -49,16 +49,33 @@ autoToggle.addEventListener('change', syncState);
 cleanToggle.addEventListener('change', syncState);
 
 document.getElementById('feedback-link').addEventListener('click', () => {
-    const feedbackUrl = "https://forms.gle/실제_주소"; 
+    const feedbackUrl = "https://docs.google.com/forms/d/e/1FAIpQLSfi5Tz8hOC72142Mtl4entlFt6eG2QmnfwaPhxR7sXWcHV5IA/viewform?usp=pp_url&entry.608323805=%ED%81%AC%EB%A1%AC+%ED%99%95%EC%9E%A5+%ED%94%84%EB%A1%9C%EA%B7%B8%EB%9E%A8";
     chrome.tabs.create({ url: feedbackUrl });
 });
 
+let noticeTimer = null;
+
+function showNotice(message, isError = false) {
+    clearTimeout(noticeTimer);
+    statusText.innerText = message;
+    statusText.style.color = isError ? "#F87171" : "#10B981";
+    statusText.style.background = isError ? "rgba(239, 68, 68, 0.1)" : "rgba(16, 185, 129, 0.1)";
+    noticeTimer = setTimeout(updateUI, 2500);
+}
+
 document.getElementById('clear-cache-btn').addEventListener('click', () => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        chrome.tabs.sendMessage(tabs[0].id, { action: "clear_cache_and_rescan" }, (response) => {
-            if (response && response.success) {
-                alert("결과 캐시가 삭제되고 화면을 재검사합니다.");
+        const tab = tabs && tabs[0];
+        if (!tab || tab.id === undefined) {
+            showNotice("현재 탭을 찾을 수 없습니다.", true);
+            return;
+        }
+        chrome.tabs.sendMessage(tab.id, { action: "clear_cache_and_rescan" }, (response) => {
+            if (chrome.runtime.lastError || !response || !response.success) {
+                showNotice("이 페이지에서는 사용할 수 없습니다.", true);
+                return;
             }
+            showNotice("캐시를 비웠습니다..");
         });
     });
 });
