@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -148,6 +149,7 @@ class CnnRuntime:
         )
         self.model: Optional[DeepfakeDetector] = None
         self.load_error: Optional[str] = None
+        self._inference_lock = threading.Lock()
         self._load()
 
     @property
@@ -168,11 +170,6 @@ class CnnRuntime:
             model.load_state_dict(payload, strict=True)
             model.eval()
             self.model = model
-            
-            self.features_output = None
-            def hook_fn(module, input, output):
-                self.features_output = output.detach() # 화면 캡처 저장           
-            self.model.model.features.register_forward_hook(hook_fn) 
             self.load_error = None
         except Exception as exc:
             self.model = None
@@ -202,15 +199,26 @@ class CnnRuntime:
                 "isDeepfake": False,
                 "views": [],
             }
-        batch = torch.stack([self._tensor_from_bgr(view.bgr) for view in valid_views]).to(self.device)
-        logits = self.model(batch)
-        probs = torch.softmax(logits, dim=1)[:, FAKE_CLASS_INDEX].detach().cpu().numpy()
-        
-        try:
-            fc_weights = self.model.model.classifier[1].weight[FAKE_CLASS_INDEX]
-            cam_batch = torch.relu(torch.einsum('bchw,c->bhw', self.features_output, fc_weights))
-        except Exception:
-            cam_batch = None
+        with self._inference_lock:
+            batch = torch.stack([self._tensor_from_bgr(view.bgr) for view in valid_views]).to(self.device)
+            captured_features: Dict[str, torch.Tensor] = {}
+
+            def capture_features(_module, _inputs, output):
+                captured_features["value"] = output.detach()
+
+            hook = self.model.model.features.register_forward_hook(capture_features)
+            try:
+                logits = self.model(batch)
+            finally:
+                hook.remove()
+
+            probs = torch.softmax(logits, dim=1)[:, FAKE_CLASS_INDEX].detach().cpu().numpy()
+            try:
+                fc_weights = self.model.model.classifier[1].weight[FAKE_CLASS_INDEX]
+                feature_output = captured_features["value"]
+                cam_batch = torch.relu(torch.einsum("bchw,c->bhw", feature_output, fc_weights))
+            except Exception:
+                cam_batch = None
 
         view_results = []
         best_prob = 0.0
@@ -244,16 +252,32 @@ class CnnRuntime:
     def predict_image_faces(self, bgr: np.ndarray, faces: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         return self.predict_views(build_cnn_views_bgr(bgr, faces))
 
+    @torch.no_grad()
+    def warm_up(self) -> bool:
+        if not self.loaded or self.model is None:
+            return False
+        with self._inference_lock:
+            sample = torch.zeros((1, 3, 224, 224), device=self.device)
+            self.model(sample)
+        return True
+
 
 _RUNTIME: Optional[CnnRuntime] = None
+_RUNTIME_LOCK = threading.Lock()
 
 
 def get_runtime() -> CnnRuntime:
     global _RUNTIME
     if _RUNTIME is None:
-        _RUNTIME = CnnRuntime()
+        with _RUNTIME_LOCK:
+            if _RUNTIME is None:
+                _RUNTIME = CnnRuntime()
     return _RUNTIME
 
 
 def predict_image_faces(bgr: np.ndarray, faces: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     return get_runtime().predict_image_faces(bgr, faces)
+
+
+def warmup_runtime() -> bool:
+    return get_runtime().warm_up()

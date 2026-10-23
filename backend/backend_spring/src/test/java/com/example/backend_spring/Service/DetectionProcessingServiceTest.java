@@ -10,11 +10,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.util.MultiValueMap;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,12 +30,15 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,6 +51,8 @@ class DetectionProcessingServiceTest {
     void workerPersistsAiPredictionWithoutChangingDetectionResultFields() throws Exception {
         RestTemplate restTemplate = mock(RestTemplate.class);
         DetectionRequestRepository requestRepository = mock(DetectionRequestRepository.class);
+        when(requestRepository.findByStatusInAndIdGreaterThanOrderByIdAsc(anyCollection(), any(), any(Pageable.class)))
+                .thenReturn(new SliceImpl<>(List.of()));
         DetectionResultRepository resultRepository = mock(DetectionResultRepository.class);
         DetectionProcessingService service = new DetectionProcessingService(
                 restTemplate,
@@ -107,6 +120,20 @@ class DetectionProcessingServiceTest {
             assertThat(saved.getProcessingTimeMs()).isEqualTo(321);
             assertThat(saved.getRawResultJson()).contains("\"isDeepfake\":true");
 
+            ArgumentCaptor<HttpEntity> aiRequestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+            verify(restTemplate, timeout(3000)).exchange(
+                    eq("http://localhost:8000/predict"),
+                    eq(HttpMethod.POST),
+                    aiRequestCaptor.capture(),
+                    eq(AiPredictionDto.class)
+            );
+            assertThat(aiRequestCaptor.getValue().getBody()).isInstanceOf(MultiValueMap.class);
+            @SuppressWarnings("unchecked")
+            MultiValueMap<String, Object> multipartBody =
+                    (MultiValueMap<String, Object>) aiRequestCaptor.getValue().getBody();
+            assertThat(multipartBody.keySet()).containsExactlyInAnyOrder("file", "analysisMode");
+            assertThat(multipartBody.getFirst("analysisMode")).isEqualTo("face_crop_only");
+
             verify(requestRepository, timeout(3000)).transitionStatus(
                     eq(7L),
                     eq(DetectionProcessingService.STATUS_DONE),
@@ -123,6 +150,8 @@ class DetectionProcessingServiceTest {
     void workerStoresFailureMessageWhenAiServerTimesOut() throws Exception {
         RestTemplate restTemplate = mock(RestTemplate.class);
         DetectionRequestRepository requestRepository = mock(DetectionRequestRepository.class);
+        when(requestRepository.findByStatusInAndIdGreaterThanOrderByIdAsc(anyCollection(), any(), any(Pageable.class)))
+                .thenReturn(new SliceImpl<>(List.of()));
         DetectionResultRepository resultRepository = mock(DetectionResultRepository.class);
         DetectionProcessingService service = new DetectionProcessingService(
                 restTemplate,
@@ -189,6 +218,8 @@ class DetectionProcessingServiceTest {
     void workerSkipsAiCallWhenQueuedRequestWasAlreadyClaimed() throws Exception {
         RestTemplate restTemplate = mock(RestTemplate.class);
         DetectionRequestRepository requestRepository = mock(DetectionRequestRepository.class);
+        when(requestRepository.findByStatusInAndIdGreaterThanOrderByIdAsc(anyCollection(), any(), any(Pageable.class)))
+                .thenReturn(new SliceImpl<>(List.of()));
         DetectionResultRepository resultRepository = mock(DetectionResultRepository.class);
         DetectionProcessingService service = new DetectionProcessingService(
                 restTemplate,
@@ -228,6 +259,87 @@ class DetectionProcessingServiceTest {
         } finally {
             service.stopWorkers();
         }
+    }
+
+    @Test
+    void permanentHttpErrorIsNotRetried() throws Exception {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        AppProperties properties = serviceProperties();
+        properties.getDetection().setAiRetryCount(2);
+        properties.getDetection().setAiRetryDelayMs(0);
+        properties.getDetection().setAiRetryJitterPercent(0);
+        DetectionProcessingService service = new DetectionProcessingService(
+                restTemplate,
+                mock(DetectionRequestRepository.class),
+                mock(DetectionResultRepository.class),
+                new ObjectMapper(),
+                properties
+        );
+        Path imagePath = tempDir.resolve("bad-request.png");
+        Files.write(imagePath, new byte[] {1});
+        when(restTemplate.exchange(
+                eq("http://localhost:8000/predict"),
+                eq(HttpMethod.POST),
+                any(),
+                eq(AiPredictionDto.class)
+        )).thenThrow(HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "bad", null, null, null));
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(
+                service,
+                "callAiServerWithRetry",
+                imagePath,
+                "face_crop_only"
+        )).isInstanceOf(HttpClientErrorException.class);
+
+        verify(restTemplate, times(1)).exchange(
+                eq("http://localhost:8000/predict"),
+                eq(HttpMethod.POST),
+                any(HttpEntity.class),
+                eq(AiPredictionDto.class)
+        );
+    }
+
+    @Test
+    void transientHttpErrorUsesConfiguredRetryBudget() throws Exception {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        AppProperties properties = serviceProperties();
+        properties.getDetection().setAiRetryCount(2);
+        properties.getDetection().setAiRetryDelayMs(0);
+        properties.getDetection().setAiRetryJitterPercent(0);
+        properties.getDetection().setAiCircuitFailureThreshold(10);
+        DetectionProcessingService service = new DetectionProcessingService(
+                restTemplate,
+                mock(DetectionRequestRepository.class),
+                mock(DetectionResultRepository.class),
+                new ObjectMapper(),
+                properties
+        );
+        Path imagePath = tempDir.resolve("service-unavailable.png");
+        Files.write(imagePath, new byte[] {1});
+        AiPredictionDto success = new AiPredictionDto();
+        when(restTemplate.exchange(
+                eq("http://localhost:8000/predict"),
+                eq(HttpMethod.POST),
+                any(),
+                eq(AiPredictionDto.class)
+        )).thenThrow(HttpServerErrorException.create(HttpStatus.SERVICE_UNAVAILABLE, "busy", null, null, null))
+                .thenThrow(HttpServerErrorException.create(HttpStatus.SERVICE_UNAVAILABLE, "busy", null, null, null))
+                .thenReturn(ResponseEntity.ok(success));
+
+        AiPredictionDto result = ReflectionTestUtils.invokeMethod(
+                service,
+                "callAiServerWithRetry",
+                imagePath,
+                "face_crop_only"
+        );
+
+        assertThat(result).isSameAs(success);
+        verify(restTemplate, times(3)).exchange(
+                eq("http://localhost:8000/predict"),
+                eq(HttpMethod.POST),
+                any(HttpEntity.class),
+                eq(AiPredictionDto.class)
+        );
     }
 
     private AppProperties serviceProperties() {

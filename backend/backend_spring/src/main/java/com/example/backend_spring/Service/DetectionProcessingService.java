@@ -10,6 +10,9 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Slice;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -28,13 +31,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -52,9 +56,9 @@ public class DetectionProcessingService {
     private final DetectionResultRepository detectionResultRepository;
     private final ObjectMapper objectMapper;
     private final AppProperties appProperties;
-    private final BlockingQueue<DetectionJob> queue;
+    private final DetectionJobQueue queue;
     private final int queueCapacity;
-    private final List<Thread> workers = new ArrayList<>();
+    private ExecutorService workerExecutor;
     private final AtomicInteger activeProcessingCount = new AtomicInteger(0);
     private final AtomicLong totalEnqueuedCount = new AtomicLong(0);
     private final AtomicLong totalCompletedCount = new AtomicLong(0);
@@ -63,31 +67,59 @@ public class DetectionProcessingService {
     private final AtomicLong totalRetryCount = new AtomicLong(0);
     private final AtomicLong totalProcessingTimeMs = new AtomicLong(0);
     private final AtomicLong totalAiCallTimeMs = new AtomicLong(0);
+    private final Semaphore aiCallPermits;
+    private final AtomicInteger consecutiveAiFailures = new AtomicInteger(0);
+    private final AtomicLong circuitOpenUntilNanos = new AtomicLong(0);
+    private long recoveryCursor = 0L;
 
     private volatile boolean running = true;
+
+    @Autowired
+    public DetectionProcessingService(RestTemplate restTemplate,
+                                      DetectionRequestRepository detectionRequestRepository,
+                                      DetectionResultRepository detectionResultRepository,
+                                      ObjectMapper objectMapper,
+                                      AppProperties appProperties,
+                                      DetectionJobQueue queue) {
+        this.restTemplate = restTemplate;
+        this.detectionRequestRepository = detectionRequestRepository;
+        this.detectionResultRepository = detectionResultRepository;
+        this.objectMapper = objectMapper;
+        this.appProperties = appProperties;
+        this.queue = queue;
+        this.queueCapacity = queue.capacity();
+        this.aiCallPermits = new Semaphore(
+                Math.max(1, appProperties.getDetection().getAiBulkheadConcurrentCalls()),
+                true
+        );
+    }
 
     public DetectionProcessingService(RestTemplate restTemplate,
                                       DetectionRequestRepository detectionRequestRepository,
                                       DetectionResultRepository detectionResultRepository,
                                       ObjectMapper objectMapper,
                                       AppProperties appProperties) {
-        this.restTemplate = restTemplate;
-        this.detectionRequestRepository = detectionRequestRepository;
-        this.detectionResultRepository = detectionResultRepository;
-        this.objectMapper = objectMapper;
-        this.appProperties = appProperties;
-        this.queueCapacity = appProperties.getDetection().getQueueCapacity();
-        this.queue = new ArrayBlockingQueue<>(this.queueCapacity);
+        this(
+                restTemplate,
+                detectionRequestRepository,
+                detectionResultRepository,
+                objectMapper,
+                appProperties,
+                new InMemoryDetectionJobQueue(appProperties)
+        );
     }
 
     @PostConstruct
     public void startWorkers() {
         int count = Math.max(1, appProperties.getDetection().getWorkerCount());
+        workerExecutor = Executors.newFixedThreadPool(count, runnable -> {
+            Thread thread = new Thread(runnable);
+            thread.setName("veritai-detection-worker");
+            thread.setDaemon(true);
+            return thread;
+        });
         for (int i = 0; i < count; i += 1) {
-            Thread worker = new Thread(this::runWorker, "veritai-detection-worker-" + (i + 1));
-            worker.setDaemon(true);
-            worker.start();
-            workers.add(worker);
+            workerExecutor.submit(this::runWorker);
         }
         recoverPendingRequests();
     }
@@ -95,8 +127,13 @@ public class DetectionProcessingService {
     @PreDestroy
     public void stopWorkers() {
         running = false;
-        for (Thread worker : workers) {
-            worker.interrupt();
+        if (workerExecutor != null) {
+            workerExecutor.shutdownNow();
+            try {
+                workerExecutor.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -114,6 +151,9 @@ public class DetectionProcessingService {
                 DetectionJob job = queue.poll(1, TimeUnit.SECONDS);
                 if (job != null) {
                     processJob(job);
+                    if (!queue.durable()) {
+                        recoverPendingRequests();
+                    }
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -199,6 +239,7 @@ public class DetectionProcessingService {
                         failureMessage,
                         Set.of(DetectionStatus.QUEUED.value(), DetectionStatus.PROCESSING.value())
                 );
+                detectionRequestRepository.releaseDedupKey(job.requestId());
             });
             totalFailedCount.incrementAndGet();
         } finally {
@@ -207,48 +248,75 @@ public class DetectionProcessingService {
         }
     }
 
-    private void recoverPendingRequests() {
+    private synchronized void recoverPendingRequests() {
         Set<String> pendingStatuses = DetectionStatus.pendingValues();
-        List<DetectionRequestEntity> pendingRequests = detectionRequestRepository.findByStatusInOrderByCreatedAtAsc(pendingStatuses);
-        for (DetectionRequestEntity requestEntity : pendingRequests) {
-            if (detectionResultRepository.findByRequestId(requestEntity.getId()).isPresent()) {
-                requestEntity.setStatus(DetectionStatus.DONE.value());
+        int pageSize = Math.max(1, appProperties.getDetection().getRecoveryPageSize());
+        long lastSeenId = recoveryCursor;
+        boolean queueHasCapacity = true;
+        while (queueHasCapacity) {
+            Slice<DetectionRequestEntity> page = detectionRequestRepository.findByStatusInAndIdGreaterThanOrderByIdAsc(
+                    pendingStatuses,
+                    lastSeenId,
+                    PageRequest.of(0, pageSize)
+            );
+            if (page.isEmpty()) {
+                recoveryCursor = 0L;
+                break;
+            }
+            for (DetectionRequestEntity requestEntity : page.getContent()) {
+                if (detectionResultRepository.findByRequestId(requestEntity.getId()).isPresent()) {
+                    requestEntity.setStatus(DetectionStatus.DONE.value());
+                    transitionStatus(
+                            requestEntity.getId(),
+                            DetectionStatus.DONE,
+                            null,
+                            pendingStatuses
+                    );
+                    lastSeenId = requestEntity.getId();
+                    continue;
+                }
+
+                Path filePath = Paths.get(requestEntity.getFilePath());
+                if (!Files.exists(filePath)) {
+                    requestEntity.setStatus(DetectionStatus.FAILED.value());
+                    transitionStatus(
+                            requestEntity.getId(),
+                            DetectionStatus.FAILED,
+                            "Uploaded file is missing during startup recovery.",
+                            pendingStatuses
+                    );
+                    detectionRequestRepository.releaseDedupKey(requestEntity.getId());
+                    lastSeenId = requestEntity.getId();
+                    continue;
+                }
+
+                requestEntity.setStatus(DetectionStatus.QUEUED.value());
                 transitionStatus(
                         requestEntity.getId(),
-                        DetectionStatus.DONE,
+                        DetectionStatus.QUEUED,
                         null,
                         pendingStatuses
                 );
-                continue;
+                if (!queue.durable()) {
+                    if (!queue.offer(new DetectionJob(
+                            requestEntity.getId(),
+                            requestEntity.getFilePath(),
+                            normalizeAnalysisMode(requestEntity.getAnalysisMode())
+                    ))) {
+                        queueHasCapacity = false;
+                        break;
+                    }
+                }
+                lastSeenId = requestEntity.getId();
+                totalEnqueuedCount.incrementAndGet();
             }
-
-            Path filePath = Paths.get(requestEntity.getFilePath());
-            if (!Files.exists(filePath)) {
-                requestEntity.setStatus(DetectionStatus.FAILED.value());
-                transitionStatus(
-                        requestEntity.getId(),
-                        DetectionStatus.FAILED,
-                        "Uploaded file is missing during startup recovery.",
-                        pendingStatuses
-                );
-                continue;
-            }
-
-            requestEntity.setStatus(DetectionStatus.QUEUED.value());
-            transitionStatus(
-                    requestEntity.getId(),
-                    DetectionStatus.QUEUED,
-                    null,
-                    pendingStatuses
-            );
-            if (!queue.offer(new DetectionJob(
-                    requestEntity.getId(),
-                    requestEntity.getFilePath(),
-                    normalizeAnalysisMode(requestEntity.getAnalysisMode())
-            ))) {
+            if (!page.hasNext()) {
+                recoveryCursor = 0L;
                 break;
             }
-            totalEnqueuedCount.incrementAndGet();
+        }
+        if (!queueHasCapacity) {
+            recoveryCursor = lastSeenId;
         }
     }
 
@@ -276,24 +344,96 @@ public class DetectionProcessingService {
     }
 
     private AiPredictionDto callAiServerWithRetry(Path filePath, String analysisMode) throws InterruptedException {
+        long bulkheadWaitMs = Math.max(0, appProperties.getDetection().getAiBulkheadWaitMs());
+        if (!aiCallPermits.tryAcquire(bulkheadWaitMs, TimeUnit.MILLISECONDS)) {
+            throw new AiCallRejectedException("AI server call concurrency limit reached.");
+        }
+        try {
+            return executeAiCallWithRetry(filePath, analysisMode);
+        } finally {
+            aiCallPermits.release();
+        }
+    }
+
+    private AiPredictionDto executeAiCallWithRetry(Path filePath, String analysisMode) throws InterruptedException {
         int attempts = Math.max(1, appProperties.getDetection().getAiRetryCount() + 1);
+        long timeoutMs = Math.max(1, appProperties.getDetection().getAiRetryTotalTimeoutMs());
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         RuntimeException lastError = null;
         for (int attempt = 1; attempt <= attempts; attempt += 1) {
+            ensureCircuitAllowsRequest();
             try {
                 totalAiCallCount.incrementAndGet();
                 long aiStarted = System.currentTimeMillis();
                 AiPredictionDto result = callAiServer(filePath, analysisMode);
                 totalAiCallTimeMs.addAndGet(Math.max(0, System.currentTimeMillis() - aiStarted));
+                consecutiveAiFailures.set(0);
                 return result;
             } catch (RuntimeException e) {
                 lastError = e;
-                if (attempt < attempts) {
-                    totalRetryCount.incrementAndGet();
-                    Thread.sleep(Math.max(0, appProperties.getDetection().getAiRetryDelayMs()));
+                if (!isRetryable(e)) {
+                    throw e;
                 }
+                recordTransientFailure();
+                if (attempt >= attempts) {
+                    break;
+                }
+                long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
+                if (remainingMs <= 0) {
+                    break;
+                }
+                totalRetryCount.incrementAndGet();
+                Thread.sleep(Math.min(calculateRetryDelayMs(attempt), remainingMs));
             }
         }
         throw lastError == null ? new RuntimeException("AI server request failed.") : lastError;
+    }
+
+    private boolean isRetryable(RuntimeException error) {
+        if (error instanceof ResourceAccessException) {
+            return true;
+        }
+        if (error instanceof HttpStatusCodeException statusException) {
+            int status = statusException.getStatusCode().value();
+            return status == 429 || status == 502 || status == 503 || status == 504;
+        }
+        return false;
+    }
+
+    private long calculateRetryDelayMs(int failedAttempt) {
+        long initial = Math.max(0, appProperties.getDetection().getAiRetryDelayMs());
+        long maximum = Math.max(initial, appProperties.getDetection().getAiRetryMaxDelayMs());
+        long multiplier = 1L << Math.min(20, Math.max(0, failedAttempt - 1));
+        long exponential = initial > Long.MAX_VALUE / multiplier ? maximum : initial * multiplier;
+        long capped = Math.min(maximum, exponential);
+        int jitterPercent = Math.max(0, Math.min(100, appProperties.getDetection().getAiRetryJitterPercent()));
+        if (capped == 0 || jitterPercent == 0) {
+            return capped;
+        }
+        long jitterRange = Math.max(1, capped * jitterPercent / 100);
+        long jitter = ThreadLocalRandom.current().nextLong(-jitterRange, jitterRange + 1);
+        return Math.max(0, capped + jitter);
+    }
+
+    private void ensureCircuitAllowsRequest() {
+        long openUntil = circuitOpenUntilNanos.get();
+        if (openUntil == 0) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (now < openUntil) {
+            throw new AiCircuitOpenException("AI server circuit breaker is open.");
+        }
+        circuitOpenUntilNanos.compareAndSet(openUntil, 0);
+        consecutiveAiFailures.set(0);
+    }
+
+    private void recordTransientFailure() {
+        int threshold = Math.max(1, appProperties.getDetection().getAiCircuitFailureThreshold());
+        if (consecutiveAiFailures.incrementAndGet() >= threshold) {
+            long openMs = Math.max(1, appProperties.getDetection().getAiCircuitOpenMs());
+            circuitOpenUntilNanos.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(openMs));
+        }
     }
 
     private AiPredictionDto callAiServer(Path filePath, String analysisMode) {
@@ -417,11 +557,20 @@ public class DetectionProcessingService {
         return metrics;
     }
 
-    private record DetectionJob(Long requestId, String filePath, String analysisMode) {
-    }
-
     public static class QueueFullException extends RuntimeException {
         public QueueFullException(String message) {
+            super(message);
+        }
+    }
+
+    public static class AiCallRejectedException extends RuntimeException {
+        public AiCallRejectedException(String message) {
+            super(message);
+        }
+    }
+
+    public static class AiCircuitOpenException extends RuntimeException {
+        public AiCircuitOpenException(String message) {
             super(message);
         }
     }

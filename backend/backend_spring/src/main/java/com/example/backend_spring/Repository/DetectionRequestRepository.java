@@ -2,6 +2,8 @@ package com.example.backend_spring.Repository;
 
 import com.example.backend_spring.Entity.DetectionRequestEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,12 +21,27 @@ public interface DetectionRequestRepository extends JpaRepository<DetectionReque
 
     List<DetectionRequestEntity> findByStatusInOrderByCreatedAtAsc(Collection<String> statuses);
 
+    Slice<DetectionRequestEntity> findByStatusInAndIdGreaterThanOrderByIdAsc(
+            Collection<String> statuses,
+            Long lastSeenId,
+            Pageable pageable
+    );
+
+    Optional<DetectionRequestEntity> findFirstByStatusOrderByCreatedAtAsc(String status);
+
+    long countByStatus(String status);
+
+    Optional<DetectionRequestEntity> findFirstByDedupKeyAndStatusInOrderByCreatedAtDesc(
+            String dedupKey,
+            Collection<String> statuses
+    );
+
     List<DetectionRequestEntity> findByStatusInAndUpdatedAtBefore(
             Collection<String> statuses,
             LocalDateTime updatedBefore
     );
 
-    Optional<DetectionRequestEntity> findFirstByFileHashAndAnalysisModeAndStatusInOrderByCreatedAtDesc(
+    Optional<DetectionRequestEntity> findFirstByFileHashAndAnalysisModeAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
             String fileHash,
             String analysisMode,
             Collection<String> statuses
@@ -46,4 +63,9 @@ public interface DetectionRequestRepository extends JpaRepository<DetectionReque
             @Param("failureMessage") String failureMessage,
             @Param("currentStatuses") Collection<String> currentStatuses
     );
+
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update DetectionRequestEntity request set request.dedupKey = null where request.id = :requestId")
+    int releaseDedupKey(@Param("requestId") Long requestId);
 }

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import math
 import os
@@ -7,7 +8,7 @@ import uuid
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
@@ -141,6 +142,37 @@ def env_int(name, default, minimum=None):
 DEBUG_ARTIFACTS = env_bool("VERITAI_DEBUG_ARTIFACTS", False)
 MAX_IMAGE_WIDTH = env_int("VERITAI_MAX_IMAGE_WIDTH", 1280, minimum=320)
 MAX_FACE_CANDIDATES = env_int("VERITAI_MAX_FACE_CANDIDATES", 8, minimum=1)
+INFERENCE_CONCURRENCY = env_int("VERITAI_INFERENCE_CONCURRENCY", 1, minimum=1)
+INFERENCE_QUEUE_CAPACITY = env_int("VERITAI_INFERENCE_QUEUE_CAPACITY", 8, minimum=0)
+
+
+class InferenceCapacity:
+    def __init__(self, concurrency, queue_capacity):
+        self.concurrency = max(1, concurrency)
+        self.queue_capacity = max(0, queue_capacity)
+        self._semaphore = asyncio.Semaphore(self.concurrency)
+        self.active = 0
+        self.waiting = 0
+
+    async def acquire(self):
+        if self.active + self.waiting >= self.concurrency + self.queue_capacity:
+            return False
+        self.waiting += 1
+        try:
+            await self._semaphore.acquire()
+        except BaseException:
+            self.waiting -= 1
+            raise
+        self.waiting -= 1
+        self.active += 1
+        return True
+
+    def release(self):
+        self.active = max(0, self.active - 1)
+        self._semaphore.release()
+
+
+INFERENCE_CAPACITY = InferenceCapacity(INFERENCE_CONCURRENCY, INFERENCE_QUEUE_CAPACITY)
 
 
 def normalize_path(path):
@@ -4808,22 +4840,14 @@ def prepare_service_cnn_inputs(image_bgr, analysis_mode="face_crop_only", crop_z
     return img, faces, debug_maps
 
 
-@app.post("/predict")
-async def predict(file: UploadFile = File(...), analysisMode: str = Form("full_image")):
-    start = time.time()
-    normalized_mode = analysisMode if analysisMode in {"full_image", "face_crop_only"} else "full_image"
-    mode_label = "face crop only" if normalized_mode == "face_crop_only" else "full image"
-    read_started = time.time()
-    contents = await file.read()
-    read_time_ms = int((time.time() - read_started) * 1000)
-    decode_started = time.time()
-    img = decode_image(contents)
-    decode_time_ms = int((time.time() - decode_started) * 1000)
-    if img is None:
-        return {"isDeepfake": False, "confidence": 0.0, "faceCount": 0, "watermarkDetected": False, "modelVersion": "veritai-pose-aware-anchor-graph-v1", "analysisMode": normalized_mode, "analysisInput": {"detectionImage": "full_image", "featureImage": "cropped_face", "deepfakeImage": "cropped_face"} if normalized_mode == "face_crop_only" else {"detectionImage": "full_image", "featureImage": "full_image", "deepfakeImage": "full_image"}, "timings": {"imageReadTimeMs": read_time_ms, "decodeTimeMs": decode_time_ms, "totalTimeMs": int((time.time() - start) * 1000)}, "processingTimeMs": 0, "message": f"{mode_label}: image decoding failed.", "faces": [], "debugImages": {}}
+def run_analysis_pipeline(img, normalized_mode):
     detection_started = time.time()
     service_timings = {}
-    img, faces, debug_maps = prepare_service_cnn_inputs(img, normalized_mode, timings=service_timings)
+    img, faces, debug_maps = prepare_service_cnn_inputs(
+        img,
+        normalized_mode,
+        timings=service_timings,
+    )
     detection_time_ms = int((time.time() - detection_started) * 1000)
     face_analysis_time_ms = service_timings.get("faceOutputTimeMs", 0) + service_timings.get("rescueTimeMs", 0)
     request_uid, debug_paths = make_debug_paths()
@@ -4837,8 +4861,64 @@ async def predict(file: UploadFile = File(...), analysisMode: str = Form("full_i
         save_debug_metadata(request_uid, faces, debug_paths)
     debug_time_ms = int((time.time() - debug_started) * 1000)
     cnn_started = time.time()
-    cnn_result = run_cnn_prediction(img, faces) 
+    cnn_result = run_cnn_prediction(img, faces)
     cnn_time_ms = int((time.time() - cnn_started) * 1000)
+    return (
+        img,
+        faces,
+        debug_paths,
+        cnn_result,
+        service_timings,
+        detection_time_ms,
+        face_analysis_time_ms,
+        debug_time_ms,
+        cnn_time_ms,
+    )
+
+
+def warmup_cnn_runtime():
+    try:
+        from cnn import warmup_runtime
+
+        return warmup_runtime()
+    except Exception:
+        return False
+
+
+@app.on_event("startup")
+async def warmup_models():
+    await asyncio.to_thread(warmup_cnn_runtime)
+
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...), analysisMode: str = Form("full_image")):
+    start = time.time()
+    normalized_mode = analysisMode if analysisMode in {"full_image", "face_crop_only"} else "full_image"
+    mode_label = "face crop only" if normalized_mode == "face_crop_only" else "full image"
+    read_started = time.time()
+    contents = await file.read()
+    read_time_ms = int((time.time() - read_started) * 1000)
+    decode_started = time.time()
+    img = await asyncio.to_thread(decode_image, contents)
+    decode_time_ms = int((time.time() - decode_started) * 1000)
+    if img is None:
+        return {"isDeepfake": False, "confidence": 0.0, "faceCount": 0, "watermarkDetected": False, "modelVersion": "veritai-pose-aware-anchor-graph-v1", "analysisMode": normalized_mode, "analysisInput": {"detectionImage": "full_image", "featureImage": "cropped_face", "deepfakeImage": "cropped_face"} if normalized_mode == "face_crop_only" else {"detectionImage": "full_image", "featureImage": "full_image", "deepfakeImage": "full_image"}, "timings": {"imageReadTimeMs": read_time_ms, "decodeTimeMs": decode_time_ms, "totalTimeMs": int((time.time() - start) * 1000)}, "processingTimeMs": 0, "message": f"{mode_label}: image decoding failed.", "faces": [], "debugImages": {}}
+    if not await INFERENCE_CAPACITY.acquire():
+        raise HTTPException(status_code=503, detail="Inference queue is full. Please retry later.")
+    try:
+        (
+            img,
+            faces,
+            debug_paths,
+            cnn_result,
+            service_timings,
+            detection_time_ms,
+            face_analysis_time_ms,
+            debug_time_ms,
+            cnn_time_ms,
+        ) = await asyncio.to_thread(run_analysis_pipeline, img, normalized_mode)
+    finally:
+        INFERENCE_CAPACITY.release()
     processing_time_ms = int((time.time() - start) * 1000)
     ready_faces = [face for face in faces if face["quality"]["label"] != "poor"]
     anchor_confidence = round(sum(face["detectionConfidence"] for face in faces) / len(faces), 4) if faces else 0.0
