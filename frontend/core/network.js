@@ -3,11 +3,14 @@ import { API_URL, POLL_INITIAL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_M
 const pendingDetectionPolls = new Map();
 let batchPollingActive = false;
 
+const STATUS_TIMEOUT_MS = 15000;
+
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function sendToBackend(blob, mediaType, analysisMode = FACE_CROP_ANALYSIS_MODE) {
     const formData = new FormData();
-    formData.append("file", blob, "capture.webp"); 
+    const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[blob.type] || "webp";
+    formData.append("file", blob, `capture.${ext}`);
     formData.append("sourceUrl", window.location.href);
     formData.append("mediaType", mediaType);
     formData.append("clientType", "chrome-extension");
@@ -82,13 +85,22 @@ async function runBatchPollingLoop() {
 
         const ids = Array.from(pendingDetectionPolls.keys()).join(",");
         let response;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS);
         try {
-            response = await fetch(`${API_URL}/status?ids=${encodeURIComponent(ids)}`);
+            response = await fetch(`${API_URL}/status?ids=${encodeURIComponent(ids)}`, { signal: controller.signal });
         } catch (error) {
+            clearTimeout(timeoutId);
+            // 응답이 늦으면 이번 조회만 건너뛰고 다시 묻는다. 전체 대기 시간(POLL_TIMEOUT_MS)이 지나면 위에서 실패 처리된다
+            if (error.name === 'AbortError') {
+                delayMs = POLL_MAX_INTERVAL_MS;
+                continue;
+            }
             pendingDetectionPolls.forEach(entry => entry.reject(error));
             pendingDetectionPolls.clear();
             break;
         }
+        clearTimeout(timeoutId);
         if (!response.ok) {
             const error = new Error(`Server response error: ${response.status}`);
             pendingDetectionPolls.forEach(entry => entry.reject(error));
