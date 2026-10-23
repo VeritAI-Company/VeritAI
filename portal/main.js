@@ -11,6 +11,7 @@ const state = {
     baseImg: null,
     heatmapImg: null,
     heatmapMode: false,
+    showAllFaces: false,
     busy: false,
 };
 
@@ -22,6 +23,34 @@ if (!IS_EMBED_REPORT) {
         onNeedRefresh() { $('pwa-status').textContent = '새 버전이 있습니다. 앱을 다시 열면 적용됩니다.'; },
         onOfflineReady() { $('pwa-status').textContent = '오프라인에서도 앱을 열 수 있습니다.'; },
     });
+}
+
+function faceFakeProb(face) {
+    const value = face?.cnn?.fakeProbability ?? face?.fakeProbability;
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function faceColor(prob) {
+    if (prob == null) return '#94A3B8';
+    if (prob >= 0.5) return '#EF4444';
+    if (prob >= 0.3) return '#F59E0B';
+    return '#10B981';
+}
+
+function selectVisibleFaces(faces, showAll) {
+    const entries = faces.map((face, index) => ({ face, index }));
+    if (showAll) return { visible: entries, hidden: 0 };
+    let top = null;
+    entries.forEach(entry => {
+        const prob = faceFakeProb(entry.face);
+        if (prob != null && (!top || prob > faceFakeProb(top.face))) top = entry;
+    });
+    const visible = entries.filter(entry => {
+        const det = entry.face.detectionConfidence;
+        return entry === top || typeof det !== 'number' || det >= 0.5;
+    });
+    if (visible.length === 0 && entries.length > 0) visible.push(entries[0]);
+    return { visible, hidden: entries.length - visible.length };
 }
 
 function showView(name) {
@@ -112,6 +141,7 @@ async function renderResult(data) {
     state.baseImg = await loadImage(state.image.url);
     state.heatmapImg = null;
     state.heatmapMode = false;
+    state.showAllFaces = false;
     if (result.heatmapBase64) {
         try { state.heatmapImg = await loadImage(`data:image/jpeg;base64,${result.heatmapBase64}`); }
         catch { state.heatmapImg = null; }
@@ -140,7 +170,7 @@ function drawCanvas() {
 
     if (state.heatmapMode && state.heatmapImg) {
         const opacity = Number($('heatmap-opacity').value) / 100;
-        const target = pickHeatmapFace(faces);
+        const target = pickHeatmapFace(state.data?.result, faces);
         ctx.save();
         ctx.globalAlpha = opacity;
         ctx.globalCompositeOperation = 'screen';
@@ -155,15 +185,12 @@ function drawCanvas() {
 
     const lineWidth = Math.max(3, canvas.width / 200);
     const fontSize = Math.max(16, Math.round(canvas.width / 28));
-    faces.forEach((face, i) => {
+    selectVisibleFaces(faces, state.showAllFaces).visible.forEach(({ face, index: i }) => {
         const box = face.bbox;
         if (!box || !(box.w > 0)) return;
-        const faceFake = (face.fakeProbability ?? face.confidence ?? 0) >= 0.5;
-        const color = faceFake ? '#EF4444' : '#10B981';
+        const color = faceColor(faceFakeProb(face));
         ctx.lineWidth = lineWidth;
         ctx.strokeStyle = color;
-        ctx.fillStyle = faceFake ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
-        ctx.fillRect(box.x, box.y, box.w, box.h);
         ctx.strokeRect(box.x, box.y, box.w, box.h);
         ctx.font = `bold ${fontSize}px sans-serif`;
         ctx.fillStyle = color;
@@ -171,14 +198,22 @@ function drawCanvas() {
     });
 }
 
-function pickHeatmapFace(faces) {
-    let best = faces[0] || null;
+function pickHeatmapFace(result, faces) {
+    const views = Array.isArray(result?.cnn?.views) ? result.cnn.views : [];
+    if (views.length > 0) {
+        const best = views.reduce((a, b) => ((b.fakeProbability ?? 0) > (a.fakeProbability ?? 0) ? b : a));
+        if (best.name === 'full') return null;
+        const match = /^face_(\d+)$/.exec(best.name || '');
+        if (match && faces[Number(match[1]) - 1]) return faces[Number(match[1]) - 1];
+    }
+    let target = null;
     let maxScore = -1;
     faces.forEach(face => {
-        const score = face.fakeProbability ?? face.confidence ?? face.detectionConfidence ?? 0;
-        if (score > maxScore) { maxScore = score; best = face; }
+        const score = faceFakeProb(face) ?? -1;
+        if (score > maxScore) { maxScore = score; target = face; }
     });
-    return best;
+    if (target) return target;
+    return faces.reduce((a, b) => ((b.detectionConfidence ?? 0) > (a?.detectionConfidence ?? -1) ? b : a), null);
 }
 
 function toggleHeatmap() {
@@ -195,19 +230,21 @@ function toggleHeatmap() {
 function renderFaceList(faces) {
     const list = $('face-list');
     list.replaceChildren();
-    faces.slice(0, 3).forEach((face, i) => {
+    const { visible, hidden } = selectVisibleFaces(faces, state.showAllFaces);
+    visible.forEach(({ face, index: i }) => {
         const card = document.createElement('div');
         card.className = 'card face-item';
 
         const title = document.createElement('div');
         title.className = 'face-title';
         title.textContent = `얼굴 ${i + 1}`;
+        title.style.color = faceColor(faceFakeProb(face));
 
         const grid = document.createElement('div');
         grid.className = 'face-grid';
         const box = face.bbox || {};
         const rows = [
-            ['조작 확률', face.fakeProbability != null ? `${(face.fakeProbability * 100).toFixed(1)}%` : '-'],
+            ['조작 확률', faceFakeProb(face) != null ? `${(faceFakeProb(face) * 100).toFixed(1)}%` : '-'],
             ['검출 신뢰도', `${((face.detectionConfidence ?? face.score ?? 0) * 100).toFixed(1)}%`],
             ['얼굴 크기', box.w ? `${box.w}×${box.h}` : '-'],
             ['품질', face.quality?.label ?? '-'],
@@ -223,6 +260,20 @@ function renderFaceList(faces) {
         card.append(title, grid);
         list.append(card);
     });
+
+    const hiddenWhenCollapsed = selectVisibleFaces(faces, false).hidden;
+    if (hiddenWhenCollapsed > 0) {
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'face-toggle';
+        toggle.textContent = state.showAllFaces ? '주요 얼굴만 보기' : `검출 신뢰도 낮은 얼굴 ${hidden}개 숨김 · 모두 보기`;
+        toggle.addEventListener('click', () => {
+            state.showAllFaces = !state.showAllFaces;
+            renderFaceList(faces);
+            drawCanvas();
+        });
+        list.append(toggle);
+    }
 }
 
 function resetFeedback() {

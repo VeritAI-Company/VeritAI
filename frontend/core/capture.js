@@ -1,19 +1,22 @@
 const MAX_UPLOAD_SIZE = 1280;
+const UPLOAD_QUALITY = 0.92;
+const PASS_THROUGH_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 async function limitImageSize(blob) {
     const bitmap = await createImageBitmap(blob);
     const { width, height } = bitmap;
-    if (width <= MAX_UPLOAD_SIZE && height <= MAX_UPLOAD_SIZE) {
+    const longSide = Math.max(width, height);
+    if (longSide <= MAX_UPLOAD_SIZE && PASS_THROUGH_TYPES.includes(blob.type)) {
         bitmap.close();
         return blob;
     }
-    const ratio = Math.min(MAX_UPLOAD_SIZE / width, MAX_UPLOAD_SIZE / height);
+    const ratio = Math.min(1, MAX_UPLOAD_SIZE / longSide);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.round(width * ratio);
-    canvas.height = Math.round(height * ratio);
+    canvas.width = Math.max(1, Math.round(width * ratio));
+    canvas.height = Math.max(1, Math.round(height * ratio));
     canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close();
-    const resized = await new Promise(resolve => canvas.toBlob(resolve, "image/webp", 0.8));
+    const resized = await new Promise(resolve => canvas.toBlob(resolve, "image/webp", UPLOAD_QUALITY));
     canvas.width = 0;
     canvas.height = 0;
     if (!resized) throw new Error("이미지 축소 실패");

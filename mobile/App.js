@@ -398,6 +398,9 @@ function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, onHome })
     const isFake = Boolean(result.isDeepfake ?? result.deepfake);
     const percent = ((Number(result.confidence) || 0) * 100).toFixed(1);
     const faceCount = Number.isFinite(result.faceCount) ? result.faceCount : faces.length;
+    const [showAllFaces, setShowAllFaces] = useState(false);
+    const { visible: visibleFaces, hidden: hiddenFaces } = selectVisibleFaces(faces, showAllFaces);
+    const canToggleFaces = selectVisibleFaces(faces, false).hidden > 0;
 
     return (
         <View style={styles.gap}>
@@ -414,16 +417,24 @@ function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, onHome })
                 </View>
             </View>
 
-            {faces.slice(0, 3).map((face, i) => (
+            {visibleFaces.map(({ face, index: i }) => (
                 <View key={i} style={styles.card}>
-                    <Text style={styles.faceTitle}>얼굴 {i + 1}</Text>
+                    <Text style={[styles.faceTitle, { color: faceColor(faceFakeProb(face)) }]}>
+                        얼굴 {i + 1} · 조작 확률 {faceFakeProb(face) != null ? `${(faceFakeProb(face) * 100).toFixed(1)}%` : '-'}
+                    </Text>
                     <Text style={styles.faceRow}>
-                        조작 확률 {face.fakeProbability != null ? `${(face.fakeProbability * 100).toFixed(1)}%` : '-'}
-                        {'   '}검출 신뢰도 {((face.detectionConfidence ?? face.score ?? 0) * 100).toFixed(1)}%
+                        검출 신뢰도 {((face.detectionConfidence ?? face.score ?? 0) * 100).toFixed(1)}%
                         {'   '}품질 {face.quality?.label ?? '-'}
                     </Text>
                 </View>
             ))}
+            {canToggleFaces && (
+                <Pressable onPress={() => setShowAllFaces(v => !v)} hitSlop={8} style={styles.faceToggle}>
+                    <Text style={styles.linkText}>
+                        {showAllFaces ? '주요 얼굴만 보기' : `검출 신뢰도 낮은 얼굴 ${hiddenFaces}개 숨김 · 모두 보기`}
+                    </Text>
+                </Pressable>
+            )}
 
             {hasImage ? (
                 <Button label="📊 자세한 리포트 보기 (얼굴 영역·히트맵·신고)" onPress={onReport} variant="secondary" />
@@ -518,6 +529,34 @@ function LinkScreen({ url, onHome }) {
     );
 }
 
+function faceFakeProb(face) {
+    const value = face?.cnn?.fakeProbability ?? face?.fakeProbability;
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function faceColor(prob) {
+    if (prob == null) return colors.textSub;
+    if (prob >= 0.5) return colors.fake;
+    if (prob >= 0.3) return '#F59E0B';
+    return colors.real;
+}
+
+function selectVisibleFaces(faces, showAll) {
+    const entries = faces.map((face, index) => ({ face, index }));
+    if (showAll) return { visible: entries, hidden: 0 };
+    let top = null;
+    entries.forEach(entry => {
+        const prob = faceFakeProb(entry.face);
+        if (prob != null && (!top || prob > faceFakeProb(top.face))) top = entry;
+    });
+    const visible = entries.filter(entry => {
+        const det = entry.face.detectionConfidence;
+        return entry === top || typeof det !== 'number' || det >= 0.5;
+    });
+    if (visible.length === 0 && entries.length > 0) visible.push(entries[0]);
+    return { visible, hidden: entries.length - visible.length };
+}
+
 function sourceLabel(source) {
     return { share: '공유', gallery: '갤러리', camera: '카메라' }[source] || '';
 }
@@ -585,6 +624,7 @@ const styles = StyleSheet.create({
     verdictIcon: { fontSize: 32 },
     verdictTitle: { fontSize: 20, fontWeight: '800' },
     faceTitle: { fontSize: 14, fontWeight: '700', color: colors.warn, marginBottom: 6 },
+    faceToggle: { alignSelf: 'center', paddingVertical: 4 },
     faceRow: { fontSize: 13, color: '#CBD5E1', lineHeight: 20 },
     requestId: { fontSize: 11, color: colors.textMuted, textAlign: 'center' },
 

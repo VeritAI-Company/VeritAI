@@ -75,7 +75,7 @@ document.getElementById('clear-cache-btn').addEventListener('click', () => {
                 showNotice("이 페이지에서는 사용할 수 없습니다.", true);
                 return;
             }
-            showNotice("캐시를 비웠습니다..");
+            showNotice("캐시를 비웠습니다.");
         });
     });
 });
