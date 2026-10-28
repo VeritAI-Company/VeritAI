@@ -32,6 +32,32 @@ INCLUDE_FULL_VIEW = os.getenv("VERITAI_CNN_INCLUDE_FULL_VIEW", "1").strip().lowe
 }
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
+# 히트맵 방식: gradcam(기본, 14x14) 또는 cam(예전 방식, 7x7)
+HEATMAP_METHOD = os.getenv("VERITAI_HEATMAP_METHOD", "gradcam").strip().lower()
+# Grad-CAM에 쓸 EfficientNet-B4 특징 블록 번호. 5번 블록 출력은 224 입력 기준 14x14다.
+GRADCAM_LAYER_INDEX = int(os.getenv("VERITAI_GRADCAM_LAYER", "5"))
+
+
+def cam_to_grid(cam: np.ndarray, fake_prob: float) -> List[List[float]]:
+    """히트맵 숫자 표. 가장 강한 칸을 1로 맞춘 뒤 그 영역의 조작 확률을 곱한다.
+    조작 확률이 낮은 영역은 히트맵도 약하게 나온다. 값 범위 0~1."""
+    cam = np.nan_to_num(np.maximum(np.asarray(cam, dtype=np.float64), 0.0))
+    peak = float(cam.max()) if cam.size else 0.0
+    if peak <= 0.0:
+        grid = np.zeros_like(cam)
+    else:
+        grid = cam / peak * max(0.0, min(1.0, float(fake_prob)))
+    return np.round(grid, 3).tolist()
+
+
+def cam_to_color_image(cam: np.ndarray, width: int, height: int) -> np.ndarray:
+    """예전 클라이언트용 heatmapBase64 그림. 영역 안에서 가장 강한 칸을 빨강으로 맞춘 JET 컬러맵."""
+    cam = np.nan_to_num(np.maximum(np.asarray(cam, dtype=np.float32), 0.0))
+    peak = float(cam.max()) if cam.size else 0.0
+    relative = cam / peak if peak > 0.0 else np.zeros_like(cam)
+    gray = np.uint8(np.clip(relative, 0.0, 1.0) * 255)
+    resized = cv2.resize(gray, (max(1, width), max(1, height)), interpolation=cv2.INTER_CUBIC)
+    return cv2.applyColorMap(resized, cv2.COLORMAP_JET)
 
 
 @dataclass(frozen=True)
@@ -169,6 +195,9 @@ class CnnRuntime:
             model = DeepfakeDetector().to(self.device)
             model.load_state_dict(payload, strict=True)
             model.eval()
+            # 가중치는 학습하지 않으므로 기울기를 계산하지 않는다 (Grad-CAM은 입력 쪽 기울기만 쓴다)
+            for param in model.parameters():
+                param.requires_grad_(False)
             self.model = model
             self.load_error = None
         except Exception as exc:
@@ -180,6 +209,48 @@ class CnnRuntime:
         return self.transform(Image.fromarray(rgb))
 
     @torch.no_grad()
+    def _forward_cam(self, batch: torch.Tensor) -> Tuple[np.ndarray, Optional[torch.Tensor]]:
+        """예전 방식 CAM. 마지막 특징층(7x7)과 fake 분류 가중치로 계산한다."""
+        captured: Dict[str, torch.Tensor] = {}
+
+        def capture_features(_module, _inputs, output):
+            captured["value"] = output.detach()
+
+        hook = self.model.model.features.register_forward_hook(capture_features)
+        try:
+            logits = self.model(batch)
+        finally:
+            hook.remove()
+        probs = torch.softmax(logits, dim=1)[:, FAKE_CLASS_INDEX].cpu().numpy()
+        try:
+            fc_weights = self.model.model.classifier[1].weight[FAKE_CLASS_INDEX]
+            cam_batch = torch.relu(torch.einsum("bchw,c->bhw", captured["value"], fc_weights))
+        except Exception:
+            cam_batch = None
+        return probs, cam_batch
+
+    def _forward_gradcam(self, batch: torch.Tensor) -> Tuple[np.ndarray, torch.Tensor]:
+        """Grad-CAM. 특징 블록(GRADCAM_LAYER_INDEX) 출력에 fake 점수의 기울기를 채널별 평균으로 곱해 더한다.
+        torchvision EfficientNet의 forward(features -> avgpool -> flatten -> classifier)를 그대로 나눠 실행하므로
+        판정 확률은 self.model(batch)와 같다. 기울기는 그 블록 뒤쪽만 계산한다.
+        모델은 eval 상태라 배치 안의 이미지끼리 서로 영향을 주지 않는다."""
+        net = self.model.model
+        split = GRADCAM_LAYER_INDEX + 1
+        if not 0 < split < len(net.features):
+            raise ValueError(f"invalid VERITAI_GRADCAM_LAYER: {GRADCAM_LAYER_INDEX}")
+        with torch.no_grad():
+            front = net.features[:split](batch)
+        activation = front.detach().requires_grad_(True)
+        with torch.enable_grad():
+            x = net.features[split:](activation)
+            x = torch.flatten(net.avgpool(x), 1)
+            logits = net.classifier(x)
+            (gradient,) = torch.autograd.grad(logits[:, FAKE_CLASS_INDEX].sum(), activation)
+        probs = torch.softmax(logits.detach(), dim=1)[:, FAKE_CLASS_INDEX].cpu().numpy()
+        weights = gradient.mean(dim=(2, 3), keepdim=True)
+        cam_batch = torch.relu((weights * activation.detach()).sum(dim=1))
+        return probs, cam_batch
+
     def predict_views(self, views: Sequence[CnnView]) -> Dict[str, Any]:
         if not self.loaded or self.model is None:
             return {
@@ -199,55 +270,63 @@ class CnnRuntime:
                 "isDeepfake": False,
                 "views": [],
             }
+        heatmap_method = "cam"
+        heatmap_error = None
         with self._inference_lock:
             batch = torch.stack([self._tensor_from_bgr(view.bgr) for view in valid_views]).to(self.device)
-            captured_features: Dict[str, torch.Tensor] = {}
-
-            def capture_features(_module, _inputs, output):
-                captured_features["value"] = output.detach()
-
-            hook = self.model.model.features.register_forward_hook(capture_features)
-            try:
-                logits = self.model(batch)
-            finally:
-                hook.remove()
-
-            probs = torch.softmax(logits, dim=1)[:, FAKE_CLASS_INDEX].detach().cpu().numpy()
-            try:
-                fc_weights = self.model.model.classifier[1].weight[FAKE_CLASS_INDEX]
-                feature_output = captured_features["value"]
-                cam_batch = torch.relu(torch.einsum("bchw,c->bhw", feature_output, fc_weights))
-            except Exception:
-                cam_batch = None
+            if HEATMAP_METHOD == "gradcam":
+                try:
+                    probs, cam_batch = self._forward_gradcam(batch)
+                    heatmap_method = "gradcam"
+                except Exception as exc:
+                    # Grad-CAM이 실패해도 판정은 그대로 하고, 예전 CAM으로 히트맵을 만든다
+                    heatmap_error = f"gradcam failed: {exc}"
+                    probs, cam_batch = self._forward_cam(batch)
+            else:
+                probs, cam_batch = self._forward_cam(batch)
 
         view_results = []
         best_prob = 0.0
-        best_heatmap = None
-
+        best_index = None
+        cams = []
         for idx, (view, prob) in enumerate(zip(valid_views, probs)):
             fake_prob = float(prob)
-            is_best = fake_prob > best_prob
-            best_prob = max(best_prob, fake_prob)
-            
-            if is_best and cam_batch is not None:
-                cam = cam_batch[idx].cpu().numpy()
-                cam = np.uint8(255 * (cam - np.min(cam)) / (np.max(cam) - np.min(cam) + 1e-8)) 
-                h, w = view.bgr.shape[:2]
-                cam_resized = cv2.resize(cam, (w, h)) 
-                best_heatmap = cv2.applyColorMap(cam_resized, cv2.COLORMAP_JET) 
-
+            if fake_prob > best_prob:
+                best_prob = fake_prob
+                best_index = idx
+            cam = cam_batch[idx].cpu().numpy() if cam_batch is not None else None
+            cams.append(cam)
             view_results.append({
-                "name": view.name, "fakeProbability": round(fake_prob, 6), "bbox": view.bbox
+                "name": view.name,
+                "fakeProbability": round(fake_prob, 6),
+                "bbox": view.bbox,
+                # 영역별 히트맵 숫자 표 (조작 확률을 곱한 값, 0~1)
+                "cam": cam_to_grid(cam, fake_prob) if cam is not None else None,
             })
-        return {
+
+        best_heatmap = None
+        heatmap_view = None
+        if best_index is not None:
+            heatmap_view = valid_views[best_index].name
+            if cams[best_index] is not None:
+                h, w = valid_views[best_index].bgr.shape[:2]
+                best_heatmap = cam_to_color_image(cams[best_index], w, h)
+
+        result = {
             "modelLoaded": True,
             "checkpoint": str(self.checkpoint_path),
             "fakeProbability": round(float(best_prob), 6),
             "isDeepfake": bool(best_prob >= self.threshold),
             "threshold": self.threshold,
             "views": view_results,
+            # 확률이 가장 높은 영역 이름 (예: "full", "face_2"). heatmapBase64도 이 영역 기준이다
+            "heatmapView": heatmap_view,
+            "heatmapMethod": heatmap_method if cam_batch is not None else None,
             "heatmap_array": best_heatmap,
         }
+        if heatmap_error:
+            result["heatmapError"] = heatmap_error
+        return result
 
     def predict_image_faces(self, bgr: np.ndarray, faces: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         return self.predict_views(build_cnn_views_bgr(bgr, faces))

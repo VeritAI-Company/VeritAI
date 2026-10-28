@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#0F172A">
+  <meta name="theme-color" content="#19202d">
   <link rel="icon" href="/icon-192x192.png">
   <link rel="apple-touch-icon" href="/icon-192x192.png">
   <title>VeritAI</title>
@@ -11,22 +11,25 @@
 </head>
 <body>
   <header class="app-header">
-    <h1>VeritAI</h1>
-    <p class="subtitle">사진 속 얼굴의 딥페이크 조작 여부를 검사합니다</p>
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4.5 6v6c0 4.5 3.2 7.7 7.5 9 4.3-1.3 7.5-4.5 7.5-9V6L12 3Z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/></svg>
+    <div>
+      <h1>VeritAI</h1>
+      <p class="subtitle">사진 속 얼굴의 딥페이크 조작 여부 검사</p>
+    </div>
   </header>
 
   <main>
     <section id="view-start" class="view">
       <div class="card start-card">
-        <div class="start-icon" aria-hidden="true">🛡️</div>
-        <p class="start-text">검사할 사진을 선택하세요</p>
-        <label class="btn btn-primary" for="input-camera">📷 사진 찍기</label>
-        <label class="btn btn-secondary" for="input-gallery">🖼 갤러리에서 선택</label>
+        <h2 class="start-title">검사할 사진을 고르세요</h2>
+        <p class="start-text">얼굴이 잘 보이는 사진일수록 정확합니다.</p>
+        <label class="btn btn-primary" for="input-gallery"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m20.5 16-5-5-8 8.5"/></svg>갤러리에서 선택</label>
+        <label class="btn btn-secondary" for="input-camera"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4V8Z"/><circle cx="12" cy="13.5" r="3.5"/></svg>사진 찍기</label>
         <input id="input-camera" type="file" accept="image/*" capture="environment" hidden>
         <input id="input-gallery" type="file" accept="image/*" hidden>
       </div>
       <p class="privacy-note">
-        선택한 사진은 최대 1280px로 줄여 분석 서버로만 전송되며, 서버에서 일정 기간 후 자동 삭제됩니다.
+        사진은 최대 1280px로 줄여 분석 서버로만 보내며, 서버에서 일정 기간이 지나면 자동으로 삭제됩니다.
       </p>
     </section>
 
@@ -34,7 +37,7 @@
       <div class="card">
         <img id="preview-image" class="preview-image" alt="선택한 사진 미리보기">
       </div>
-      <button id="btn-inspect" class="btn btn-primary" type="button">🔍 검사하기</button>
+      <button id="btn-inspect" class="btn btn-primary" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>검사하기</button>
       <button class="btn btn-ghost js-restart" type="button">다른 사진 선택</button>
     </section>
 
@@ -42,57 +45,66 @@
       <div class="card loading-card" role="status" aria-live="polite">
         <div class="spinner" aria-hidden="true"></div>
         <p id="loading-text" class="loading-text">사진을 준비하는 중...</p>
-        <p class="loading-sub">사진에 따라 수 초 정도 걸릴 수 있습니다</p>
+        <p class="loading-sub">사진에 따라 몇 초 걸릴 수 있습니다</p>
       </div>
     </section>
 
     <section id="view-result" class="view" hidden>
       <div id="verdict" class="verdict" role="status" aria-live="polite">
-        <span id="verdict-icon" class="verdict-icon" aria-hidden="true"></span>
-        <div>
-          <div id="verdict-title" class="verdict-title"></div>
-          <div id="verdict-detail" class="verdict-detail"></div>
+        <div class="verdict-head">
+          <span id="verdict-icon" class="verdict-icon" aria-hidden="true"></span>
+          <span id="verdict-title" class="verdict-title"></span>
         </div>
+        <div id="verdict-desc" class="verdict-desc"></div>
+        <div class="meter" id="verdict-meter">
+          <div class="meter-row"><span>조작 확률</span><b id="verdict-percent"></b></div>
+          <span class="track"><span id="verdict-fill" class="fill"></span></span>
+          <div class="meter-scale"><span>0</span><span>판정 기준 50%</span><span>100</span></div>
+        </div>
+        <div id="verdict-detail" class="verdict-detail"></div>
       </div>
 
       <div class="card">
         <div class="stage-header">
-          <span id="stage-title" class="stage-title">감지 영역</span>
-          <button id="btn-heatmap" class="chip" type="button">AI 분석 근거 보기</button>
+          <span id="stage-title" class="stage-title">감지된 얼굴</span>
+          <button id="btn-heatmap" class="chip" type="button">판단 근거 보기</button>
         </div>
         <canvas id="result-canvas" class="result-canvas"></canvas>
         <div id="heatmap-controls" class="heatmap-controls" hidden>
           <span class="range-label">원본</span>
-          <input id="heatmap-opacity" type="range" min="0" max="100" value="70" aria-label="히트맵 투명도">
-          <span class="range-label range-label-hot">히트맵</span>
+          <input id="heatmap-opacity" type="range" min="0" max="100" value="85" aria-label="히트맵 진하기">
+          <span class="range-label">히트맵</span>
         </div>
+        <div id="heatmap-views" class="heatmap-views" hidden></div>
+        <p id="heatmap-note" class="heatmap-note" hidden></p>
+        <div id="heatmap-legend" class="heatmap-legend" hidden><span>약함</span><i></i><span>강함</span></div>
       </div>
 
       <div id="face-list" class="face-list"></div>
 
       <div class="card feedback-card">
-        <button id="btn-feedback-open" class="btn btn-ghost btn-small" type="button">🚨 결과가 틀렸나요? 신고하기</button>
+        <button id="btn-feedback-open" class="btn btn-ghost btn-small" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg>결과가 틀렸나요? 신고하기</button>
         <form id="feedback-form" class="feedback-form" hidden>
-          <label for="feedback-reason" class="feedback-label">어떤 부분이 잘못되었나요?</label>
+          <label for="feedback-reason" class="feedback-label">어떤 점이 틀렸나요?</label>
           <textarea id="feedback-reason" rows="3" maxlength="500" placeholder="예: 실제 사진인데 조작 의심으로 나왔어요"></textarea>
           <div class="feedback-actions">
             <button id="btn-feedback-cancel" class="btn btn-ghost btn-small" type="button">취소</button>
-            <button id="btn-feedback-submit" class="btn btn-danger btn-small" type="submit">제출</button>
+            <button id="btn-feedback-submit" class="btn btn-primary btn-small" type="submit">보내기</button>
           </div>
         </form>
         <p id="feedback-status" class="feedback-status" hidden></p>
       </div>
 
-      <button class="btn btn-primary js-restart" type="button">다른 사진 검사</button>
+      <button class="btn btn-secondary js-restart" type="button">다른 사진 검사</button>
       <p id="request-id" class="request-id"></p>
     </section>
 
     <section id="view-error" class="view" hidden>
       <div class="card error-card" role="alert">
-        <div class="error-icon" aria-hidden="true">⚠️</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.8 19.5h18.4L12 4Z"/><path d="M12 10v4.2"/><path d="M12 17.2h.01"/></svg>
         <p id="error-text" class="error-text"></p>
       </div>
-      <button id="btn-retry" class="btn btn-primary" type="button">🔄 다시 시도</button>
+      <button id="btn-retry" class="btn btn-primary" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg>다시 시도</button>
       <button class="btn btn-ghost js-restart" type="button">처음으로</button>
     </section>
   </main>

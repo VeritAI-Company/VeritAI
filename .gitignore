@@ -29,6 +29,8 @@ backend/backend_spring/uploads/
 
 ### AI ###
 ai/venv/
+venv/
+.venv/
 ai/debug/
 ai/tmp/
 
