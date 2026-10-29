@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator, BackHandler, Image, Pressable, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
@@ -8,24 +8,35 @@ import * as ImagePicker from 'expo-image-picker';
 import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
 import { WebView } from 'react-native-webview';
 
-import { colors } from './src/theme';
+import { colors as themeColors } from './src/theme';
 import { PORTAL_URL } from './src/config';
 import { requestDetection, fetchDetection, toFriendlyMessage, toErrorDetail } from './src/api';
 import { prepareMedia, prepareVideoFrame, clampFrameTime, formatTime, toFileUri, isVideoMime } from './src/media';
 import { loadHistory, addHistory, clearHistory, toHistoryEntry } from './src/history';
 
+// 색과 스타일을 모든 화면에 나눠 준다
+const ThemeContext = createContext(null);
+
+function useTheme() {
+    return useContext(ThemeContext);
+}
+
 export default function App() {
+    const theme = useMemo(() => ({ colors: themeColors, styles: makeStyles(themeColors) }), []);
     return (
-        <SafeAreaProvider>
-            <ShareIntentProvider>
-                <StatusBar style="light" />
-                <Main />
-            </ShareIntentProvider>
-        </SafeAreaProvider>
+        <ThemeContext.Provider value={theme}>
+            <SafeAreaProvider>
+                <ShareIntentProvider>
+                    <StatusBar style="light" />
+                    <Main />
+                </ShareIntentProvider>
+            </SafeAreaProvider>
+        </ThemeContext.Provider>
     );
 }
 
 function Main() {
+    const { colors, styles } = useTheme();
     const [screen, setScreen] = useState('home');
     const [media, setMedia] = useState(null);
     const [source, setSource] = useState('gallery');
@@ -225,15 +236,17 @@ function Main() {
 }
 
 function Header() {
+    const { colors, styles } = useTheme();
     return (
         <View style={styles.header}>
             <Text style={styles.title}>VeritAI</Text>
-            <Text style={styles.subtitle}>사진·영상 속 얼굴의 딥페이크 조작 여부를 검사합니다</Text>
+            <Text style={styles.subtitle}>사진·영상 속 얼굴의 딥페이크 조작 여부 검사</Text>
         </View>
     );
 }
 
 function Button({ label, onPress, variant = 'primary', disabled = false }) {
+    const { colors, styles } = useTheme();
     return (
         <Pressable
             onPress={onPress}
@@ -248,24 +261,25 @@ function Button({ label, onPress, variant = 'primary', disabled = false }) {
                 disabled && { opacity: 0.5 },
             ]}
         >
-            <Text style={[styles.btnText, variant === 'ghost' && styles.btnTextGhost]}>{label}</Text>
+            <Text style={[styles.btnText, variant === 'primary' && styles.btnTextPrimary, variant === 'ghost' && styles.btnTextGhost]}>{label}</Text>
         </Pressable>
     );
 }
 
 function HomeScreen({ onCamera, onGallery, history, onOpenHistory, onClearHistory }) {
+    const { colors, styles } = useTheme();
     return (
         <View style={styles.gap}>
-            <View style={[styles.card, styles.center, styles.gap]}>
-                <Text style={styles.bigIcon}>🛡️</Text>
-                <Text style={styles.cardTitle}>검사할 사진이나 영상을 선택하세요</Text>
-                <Button label="📷 사진 찍기" onPress={onCamera} />
-                <Button label="🖼 갤러리에서 선택 (사진·영상)" onPress={onGallery} variant="secondary" />
+            <View style={[styles.card, styles.gap]}>
+                <Text style={styles.startTitle}>검사할 사진이나 영상을 고르세요</Text>
+                <Text style={styles.muted}>얼굴이 잘 보이는 사진일수록 정확합니다.</Text>
+                <Button label="갤러리에서 선택" onPress={onGallery} />
+                <Button label="사진 찍기" onPress={onCamera} variant="secondary" />
             </View>
 
             <View style={styles.tip}>
                 <Text style={styles.tipText}>
-                    💡 갤러리·카카오톡 등에서 사진을 <Text style={styles.bold}>공유 → VeritAI</Text>로 보내도 바로 검사할 수 있어요.
+                    갤러리·카카오톡 등에서 사진을 <Text style={styles.bold}>공유 → VeritAI</Text>로 보내도 바로 검사할 수 있어요.
                     인스타그램 게시물은 스크린샷을 찍어 공유해 주세요.
                 </Text>
             </View>
@@ -284,11 +298,14 @@ function HomeScreen({ onCamera, onGallery, history, onOpenHistory, onClearHistor
                 ) : (
                     history.slice(0, 20).map(item => (
                         <Pressable key={`${item.requestId}-${item.createdAt}`} onPress={() => onOpenHistory(item)} style={styles.historyItem}>
-                            <Text style={[styles.historyVerdict, { color: item.isFake ? colors.fake : colors.real }]}>
-                                {item.isFake ? '🚨 조작 의심' : '✅ 정상'}
-                            </Text>
+                            <View style={styles.historyHead}>
+                                <View style={[styles.dot, { backgroundColor: item.isFake ? colors.fake : colors.real }]} />
+                                <Text style={[styles.historyVerdict, { color: item.isFake ? colors.fake : colors.real }]}>
+                                    {item.isFake ? '조작 의심' : '정상'}
+                                </Text>
+                            </View>
                             <Text style={styles.historyMeta}>
-                                {(item.confidence * 100).toFixed(1)}% · 얼굴 {item.faceCount}명 · {sourceLabel(item.source)}
+                                조작 확률 {(item.confidence * 100).toFixed(1)}% · 얼굴 {item.faceCount}개 · {sourceLabel(item.source)}
                                 {item.mediaType === 'video_frame' ? ` · 영상${item.frameTimeMs != null ? ` ${formatTime(item.frameTimeMs)}` : ''}` : ''}
                             </Text>
                             <Text style={styles.historyDate}>{formatDate(item.createdAt)}</Text>
@@ -297,13 +314,14 @@ function HomeScreen({ onCamera, onGallery, history, onOpenHistory, onClearHistor
                 )}
             </View>
             <Text style={styles.privacy}>
-                사진은 최대 1280px로 줄여 분석 서버로만 전송됩니다. 기록에는 사진을 저장하지 않고 판정 결과만 남깁니다.
+                사진은 최대 1280px로 줄여 분석 서버로만 보냅니다. 기록에는 사진 없이 판정 결과만 남깁니다.
             </Text>
         </View>
     );
 }
 
 function PreviewScreen({ media, source, frameBusy, frameError, onChangeFrame, onInspect, onCancel }) {
+    const { colors, styles } = useTheme();
     const aspectRatio = media.width && media.height ? media.width / media.height : 1;
     const isVideo = media.mediaType === 'video_frame';
     const canPickFrame = isVideo && Boolean(media.sourceUri);
@@ -330,13 +348,14 @@ function PreviewScreen({ media, source, frameBusy, frameError, onChangeFrame, on
                 )}
                 {!!frameError && <Text style={styles.frameError}>{frameError}</Text>}
             </View>
-            <Button label={isVideo ? '🔍 이 장면 검사하기' : '🔍 검사하기'} onPress={onInspect} disabled={frameBusy} />
+            <Button label={isVideo ? '이 장면 검사하기' : '검사하기'} onPress={onInspect} disabled={frameBusy} />
             <Button label={isVideo ? '다른 영상·사진 선택' : '다른 사진 선택'} onPress={onCancel} variant="ghost" />
         </View>
     );
 }
 
 function FramePicker({ media, disabled, onChange }) {
+    const { colors, styles } = useTheme();
     const current = media.frameTimeMs || 0;
     const steps = [
         { label: '-5초', delta: -5000 },
@@ -370,6 +389,7 @@ function FramePicker({ media, disabled, onChange }) {
 }
 
 function FrameButton({ label, onPress, disabled }) {
+    const { colors, styles } = useTheme();
     return (
         <Pressable
             onPress={onPress}
@@ -383,74 +403,105 @@ function FrameButton({ label, onPress, disabled }) {
 }
 
 function LoadingScreen({ text }) {
+    const { colors, styles } = useTheme();
     return (
         <View style={[styles.card, styles.center, styles.loadingCard]}>
-            <ActivityIndicator size="large" color={colors.accent} />
+            <ActivityIndicator size="large" color={colors.text} />
             <Text style={styles.loadingText}>{text}</Text>
-            <Text style={styles.muted}>사진에 따라 수 초 정도 걸릴 수 있습니다</Text>
+            <Text style={styles.muted}>사진에 따라 몇 초 걸릴 수 있습니다</Text>
         </View>
     );
 }
 
 function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, onHome }) {
+    const { colors, styles } = useTheme();
     const result = data.result || {};
     const faces = Array.isArray(result.faces) ? result.faces : [];
     const isFake = Boolean(result.isDeepfake ?? result.deepfake);
-    const percent = ((Number(result.confidence) || 0) * 100).toFixed(1);
+    const confidence = Number(result.confidence) || 0;
+    const percent = (confidence * 100).toFixed(1);
     const faceCount = Number.isFinite(result.faceCount) ? result.faceCount : faces.length;
+    const verdictDesc = isFake
+        ? '조작되었을 가능성이 높습니다.'
+        : confidence >= 0.3 ? '조작 흔적이 약하게 보이지만 기준보다 낮습니다.' : '조작 흔적을 찾지 못했습니다.';
+    const meta = [faceCount > 0 ? `얼굴 ${faceCount}개 검사` : '얼굴을 찾지 못해 사진 전체로 검사'];
+    if (media?.mediaType === 'video_frame' && media.frameTimeMs != null) meta.push(`영상 ${formatTime(media.frameTimeMs)} 장면`);
     const [showAllFaces, setShowAllFaces] = useState(false);
     const { visible: visibleFaces, hidden: hiddenFaces } = selectVisibleFaces(faces, showAllFaces);
     const canToggleFaces = selectVisibleFaces(faces, false).hidden > 0;
 
     return (
         <View style={styles.gap}>
-            <View style={[styles.verdict, isFake ? styles.verdictFake : styles.verdictReal]}>
-                <Text style={styles.verdictIcon}>{isFake ? '🚨' : '✅'}</Text>
-                <View style={{ flex: 1 }}>
-                    <Text style={[styles.verdictTitle, { color: isFake ? colors.fake : colors.real }]}>
-                        {isFake ? '조작 의심' : '정상'}
-                    </Text>
-                    <Text style={styles.muted}>조작 확률 {percent}% · 검출된 얼굴 {faceCount}명</Text>
-                    {media?.mediaType === 'video_frame' && media.frameTimeMs != null && (
-                        <Text style={styles.muted}>영상 {formatTime(media.frameTimeMs)} 지점 장면</Text>
-                    )}
+            <View style={styles.verdict} accessible accessibilityLabel={`${isFake ? '조작 의심' : '정상'}. ${verdictDesc} 조작 확률 ${percent}%`}>
+                <Text style={[styles.verdictTitle, { color: isFake ? colors.fake : colors.real }]}>
+                    {isFake ? '조작 의심' : '정상'}
+                </Text>
+                <Text style={styles.verdictDesc}>{verdictDesc}</Text>
+                <View style={styles.meterRow}>
+                    <Text style={styles.meterLabel}>조작 확률</Text>
+                    <Text style={styles.meterValue}>{percent}%</Text>
                 </View>
+                <View style={styles.track}>
+                    <View style={[styles.fill, { width: `${Math.round(confidence * 100)}%`, backgroundColor: faceColor(confidence, colors) }]} />
+                </View>
+                <View style={styles.meterScale}>
+                    <Text style={styles.scaleText}>0</Text>
+                    <Text style={styles.scaleText}>판정 기준 50%</Text>
+                    <Text style={styles.scaleText}>100</Text>
+                </View>
+                <Text style={styles.verdictMeta}>{meta.join(' · ')}</Text>
             </View>
 
-            {visibleFaces.map(({ face, index: i }) => (
-                <View key={i} style={styles.card}>
-                    <Text style={[styles.faceTitle, { color: faceColor(faceFakeProb(face)) }]}>
-                        얼굴 {i + 1} · 조작 확률 {faceFakeProb(face) != null ? `${(faceFakeProb(face) * 100).toFixed(1)}%` : '-'}
-                    </Text>
-                    <Text style={styles.faceRow}>
-                        검출 신뢰도 {((face.detectionConfidence ?? face.score ?? 0) * 100).toFixed(1)}%
-                        {'   '}품질 {face.quality?.label ?? '-'}
-                    </Text>
+            {faces.length > 0 && (
+                <View style={styles.faceList}>
+                    {visibleFaces.map(({ face, index: i }) => {
+                        const prob = faceFakeProb(face);
+                        const info = [
+                            FACE_MODE_LABELS[face.faceMode] || face.faceMode || '-',
+                            `인식 신뢰도 ${((face.detectionConfidence ?? face.score ?? 0) * 100).toFixed(0)}%`,
+                            `화질 ${FACE_QUALITY_LABELS[face.quality?.label] || face.quality?.label || '-'}`,
+                        ].join(' · ');
+                        return (
+                            <View key={i} style={[styles.faceItem, i !== visibleFaces[0].index && styles.faceItemBorder]}>
+                                <View style={styles.faceRowLine}>
+                                    <Text style={styles.faceName}>얼굴 {i + 1}</Text>
+                                    <View style={[styles.track, styles.faceTrack]}>
+                                        <View style={[styles.fill, { width: `${Math.round((prob ?? 0) * 100)}%`, backgroundColor: faceColor(prob, colors) }]} />
+                                    </View>
+                                    <Text style={[styles.faceProb, { color: faceColor(prob, colors) }]}>
+                                        {prob != null ? `${(prob * 100).toFixed(0)}%` : '-'}
+                                    </Text>
+                                </View>
+                                <Text style={styles.faceInfo}>{info}</Text>
+                            </View>
+                        );
+                    })}
+                    {canToggleFaces && (
+                        <Pressable onPress={() => setShowAllFaces(v => !v)} hitSlop={8} style={styles.faceToggle}>
+                            <Text style={styles.linkText}>
+                                {showAllFaces ? '주요 얼굴만 보기' : `인식 신뢰도가 낮은 얼굴 ${hiddenFaces}개 더 보기`}
+                            </Text>
+                        </Pressable>
+                    )}
                 </View>
-            ))}
-            {canToggleFaces && (
-                <Pressable onPress={() => setShowAllFaces(v => !v)} hitSlop={8} style={styles.faceToggle}>
-                    <Text style={styles.linkText}>
-                        {showAllFaces ? '주요 얼굴만 보기' : `검출 신뢰도 낮은 얼굴 ${hiddenFaces}개 숨김 · 모두 보기`}
-                    </Text>
-                </Pressable>
             )}
 
             {hasImage ? (
-                <Button label="📊 자세한 리포트 보기 (얼굴 영역·히트맵·신고)" onPress={onReport} variant="secondary" />
+                <Button label="자세히 보기 (얼굴 위치·판단 근거·신고)" onPress={onReport} />
             ) : (
-                <Text style={styles.muted}>검사 기록에는 사진이 저장되지 않아 자세한 리포트는 볼 수 없습니다.</Text>
+                <Text style={styles.muted}>기록에는 사진이 저장되지 않아 자세한 결과는 볼 수 없습니다.</Text>
             )}
             {media?.sourceUri && (
-                <Button label="🎬 같은 영상의 다른 장면 검사" onPress={onOtherFrame} variant="secondary" />
+                <Button label="같은 영상의 다른 장면 검사" onPress={onOtherFrame} variant="secondary" />
             )}
-            <Button label="다른 사진 검사" onPress={onHome} />
-            {data.requestId != null && <Text style={styles.requestId}>요청 ID: {data.requestId}</Text>}
+            <Button label="다른 사진 검사" onPress={onHome} variant="secondary" />
+            {data.requestId != null && <Text style={styles.requestId}>요청 번호 {data.requestId}</Text>}
         </View>
     );
 }
 
 function ReportScreen({ media, data, onBack }) {
+    const { colors, styles } = useTheme();
     const webRef = useRef(null);
     const [loadFailed, setLoadFailed] = useState(false);
 
@@ -467,7 +518,7 @@ function ReportScreen({ media, data, onBack }) {
         <View style={{ flex: 1 }}>
             <View style={styles.reportBar}>
                 <Pressable onPress={onBack} hitSlop={10}><Text style={styles.linkText}>‹ 결과로 돌아가기</Text></Pressable>
-                <Text style={styles.reportTitle}>분석 리포트</Text>
+                <Text style={styles.reportTitle}>검사 결과</Text>
                 <View style={{ width: 90 }} />
             </View>
             {loadFailed ? (
@@ -496,26 +547,28 @@ function ReportScreen({ media, data, onBack }) {
 }
 
 function ErrorScreen({ message, detail, onRetry, onHome }) {
+    const { colors, styles } = useTheme();
     return (
         <View style={styles.gap}>
-            <View style={[styles.card, styles.center, styles.gap]}>
-                <Text style={styles.bigIcon}>⚠️</Text>
+            <View style={[styles.card, styles.center, styles.gap, styles.errorCard]}>
+                <Text style={styles.errorTitle}>문제가 생겼어요</Text>
                 <Text style={styles.errorText}>{message}</Text>
                 {!!detail && (
                     <Text style={styles.errorDetail} selectable>자세한 원인: {detail}</Text>
                 )}
             </View>
-            {onRetry && <Button label="🔄 다시 시도" onPress={onRetry} />}
+            {onRetry && <Button label="다시 시도" onPress={onRetry} />}
             <Button label="처음으로" onPress={onHome} variant="ghost" />
         </View>
     );
 }
 
 function LinkScreen({ url, onHome }) {
+    const { colors, styles } = useTheme();
     return (
         <View style={styles.gap}>
             <View style={[styles.card, styles.gap]}>
-                <Text style={styles.cardTitle}>🔗 링크가 공유되었습니다</Text>
+                <Text style={styles.cardTitle}>링크가 공유되었습니다</Text>
                 {!!url && <Text style={styles.urlText} numberOfLines={3}>{url}</Text>}
                 <Text style={styles.bodyText}>
                     인스타그램 등 SNS는 공유할 때 사진 대신 게시물 링크만 보내 주기 때문에, 링크로는 아직 검사할 수 없습니다.
@@ -534,10 +587,10 @@ function faceFakeProb(face) {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function faceColor(prob) {
+function faceColor(prob, colors) {
     if (prob == null) return colors.textSub;
     if (prob >= 0.5) return colors.fake;
-    if (prob >= 0.3) return '#F59E0B';
+    if (prob >= 0.3) return colors.warn;
     return colors.real;
 }
 
@@ -557,6 +610,9 @@ function selectVisibleFaces(faces, showAll) {
     return { visible, hidden: entries.length - visible.length };
 }
 
+const FACE_MODE_LABELS = { frontal: '정면', 'profile-left': '왼쪽 옆모습', 'profile-right': '오른쪽 옆모습', eyes_closed: '눈 감음', occluded: '가려짐' };
+const FACE_QUALITY_LABELS = { good: '좋음', usable: '보통', poor: '낮음' };
+
 function sourceLabel(source) {
     return { share: '공유', gallery: '갤러리', camera: '카메라' }[source] || '';
 }
@@ -568,7 +624,8 @@ function formatDate(iso) {
     return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const styles = StyleSheet.create({
+function makeStyles(colors) {
+    return StyleSheet.create({
     safe: { flex: 1, backgroundColor: colors.bg },
     container: { padding: 16, paddingBottom: 32 },
     gap: { gap: 12 },
@@ -576,62 +633,80 @@ const styles = StyleSheet.create({
     rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
 
     header: { marginTop: 4, marginBottom: 18 },
-    title: { fontSize: 24, fontWeight: '800', color: colors.accent },
-    subtitle: { marginTop: 4, fontSize: 13, color: colors.textSub },
+    title: { fontSize: 20, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
+    subtitle: { marginTop: 2, fontSize: 12, color: colors.textSub },
 
-    card: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 14, padding: 16 },
+    card: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 12, padding: 16 },
+    startTitle: { fontSize: 17, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
     cardTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
     sectionTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
-    bigIcon: { fontSize: 44 },
     bold: { fontWeight: '700', color: colors.text },
     muted: { fontSize: 13, color: colors.textSub },
-    bodyText: { fontSize: 14, lineHeight: 21, color: '#CBD5E1' },
+    bodyText: { fontSize: 14, lineHeight: 21, color: colors.textSub },
     linkText: { fontSize: 13, color: colors.accent, fontWeight: '600' },
 
-    btn: { alignSelf: 'stretch', minHeight: 50, borderRadius: 12, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
-    btnPrimary: { backgroundColor: colors.accent },
+    btn: { alignSelf: 'stretch', minHeight: 48, borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
+    btnPrimary: { backgroundColor: colors.primary },
     btnSecondary: { backgroundColor: 'transparent', borderColor: colors.border },
     btnGhost: { backgroundColor: 'transparent', minHeight: 44 },
-    btnText: { color: colors.text, fontSize: 16, fontWeight: '700', textAlign: 'center' },
-    btnTextGhost: { color: colors.textSub, fontWeight: '600' },
+    btnText: { color: colors.text, fontSize: 15, fontWeight: '600', textAlign: 'center' },
+    btnTextPrimary: { color: colors.onPrimary },
+    btnTextGhost: { color: colors.textSub, fontWeight: '500' },
 
-    tip: { backgroundColor: 'rgba(59,130,246,0.1)', borderRadius: 12, padding: 12 },
-    tipText: { fontSize: 13, lineHeight: 20, color: '#CBD5E1' },
+    tip: { borderColor: colors.border, borderWidth: 1, borderRadius: 10, padding: 12 },
+    tipText: { fontSize: 13, lineHeight: 20, color: colors.textSub },
 
     historyItem: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.border },
+    historyHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    dot: { width: 7, height: 7, borderRadius: 4 },
     historyVerdict: { fontSize: 15, fontWeight: '700' },
-    historyMeta: { marginTop: 2, fontSize: 13, color: '#CBD5E1' },
+    historyMeta: { marginTop: 2, fontSize: 13, color: colors.textSub },
     historyDate: { marginTop: 2, fontSize: 12, color: colors.textMuted },
-    privacy: { fontSize: 12, lineHeight: 18, color: colors.textSub, textAlign: 'center' },
+    privacy: { fontSize: 12, lineHeight: 18, color: colors.textMuted, textAlign: 'center' },
 
-    badgeInfo: { alignSelf: 'flex-start', marginBottom: 8, fontSize: 12, color: colors.accent, fontWeight: '700' },
-    preview: { width: '100%', borderRadius: 8, backgroundColor: '#000' },
-    frameOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 8, backgroundColor: 'rgba(15,23,42,0.6)', alignItems: 'center', justifyContent: 'center', gap: 8 },
+    badgeInfo: { alignSelf: 'flex-start', marginBottom: 8, fontSize: 12, color: colors.textSub, fontWeight: '600' },
+    preview: { width: '100%', borderRadius: 6, backgroundColor: '#000' },
+    frameOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 6, backgroundColor: 'rgba(18,20,23,0.6)', alignItems: 'center', justifyContent: 'center', gap: 8 },
     frameOverlayText: { fontSize: 13, color: colors.text, fontWeight: '600' },
     framePicker: { marginTop: 12, gap: 8 },
     frameHint: { fontSize: 12, color: colors.textSub },
     frameRow: { flexDirection: 'row', gap: 8 },
-    frameBtn: { flex: 1, minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+    frameBtn: { flex: 1, minHeight: 40, borderRadius: 8, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
     frameBtnText: { fontSize: 14, color: colors.text, fontWeight: '600' },
     frameError: { marginTop: 8, fontSize: 12, color: colors.warn },
 
     loadingCard: { paddingVertical: 40, gap: 10 },
-    loadingText: { marginTop: 6, fontSize: 16, fontWeight: '700', color: colors.text },
+    loadingText: { marginTop: 6, fontSize: 16, fontWeight: '600', color: colors.text },
 
-    verdict: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 14, borderWidth: 1 },
-    verdictReal: { backgroundColor: 'rgba(16,185,129,0.12)', borderColor: 'rgba(16,185,129,0.5)' },
-    verdictFake: { backgroundColor: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.6)' },
-    verdictIcon: { fontSize: 32 },
-    verdictTitle: { fontSize: 20, fontWeight: '800' },
-    faceTitle: { fontSize: 14, fontWeight: '700', color: colors.warn, marginBottom: 6 },
-    faceToggle: { alignSelf: 'center', paddingVertical: 4 },
-    faceRow: { fontSize: 13, color: '#CBD5E1', lineHeight: 20 },
+    verdict: { paddingVertical: 18, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+    verdictTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.4 },
+    verdictDesc: { marginTop: 2, fontSize: 14, color: colors.textSub },
+    meterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 14, marginBottom: 6 },
+    meterLabel: { fontSize: 13, color: colors.textSub },
+    meterValue: { fontSize: 15, fontWeight: '700', color: colors.text },
+    track: { height: 8, borderRadius: 4, backgroundColor: colors.track, overflow: 'hidden' },
+    fill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4 },
+    meterScale: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 },
+    scaleText: { fontSize: 11, color: colors.textMuted },
+    verdictMeta: { marginTop: 10, fontSize: 13, color: colors.textMuted },
+    faceList: { borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: 16, paddingVertical: 4 },
+    faceItem: { paddingVertical: 12 },
+    faceItemBorder: { borderTopWidth: 1, borderTopColor: colors.border },
+    faceRowLine: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    faceName: { width: 48, fontSize: 14, fontWeight: '600', color: colors.text },
+    faceTrack: { flex: 1, height: 6 },
+    faceProb: { width: 44, textAlign: 'right', fontSize: 14, fontWeight: '600' },
+    faceInfo: { marginTop: 4, marginLeft: 60, fontSize: 12, color: colors.textMuted },
+    faceToggle: { alignSelf: 'center', paddingVertical: 8 },
     requestId: { fontSize: 11, color: colors.textMuted, textAlign: 'center' },
 
+    errorCard: { paddingVertical: 24 },
+    errorTitle: { fontSize: 16, fontWeight: '700', color: colors.warn },
     errorText: { fontSize: 15, lineHeight: 23, color: colors.text, textAlign: 'center' },
     errorDetail: { fontSize: 12, lineHeight: 18, color: colors.textMuted, textAlign: 'center' },
-    urlText: { fontSize: 13, color: colors.accent },
+    urlText: { fontSize: 13, color: colors.textSub },
 
     reportBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
     reportTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
 });
+}
