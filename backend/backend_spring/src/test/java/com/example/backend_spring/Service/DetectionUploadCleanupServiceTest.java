@@ -85,6 +85,66 @@ class DetectionUploadCleanupServiceTest {
         assertThat(outsideFile).exists();
     }
 
+    @Test
+    void directDeletionReportsMissingFilesWithoutFailure() throws Exception {
+        Path uploadDir = tempDir.resolve("uploads");
+        Files.createDirectories(uploadDir);
+        DetectionUploadCleanupService cleanupService = new DetectionUploadCleanupService(
+                mock(DetectionRequestRepository.class),
+                properties(uploadDir)
+        );
+
+        DetectionUploadCleanupService.FileDeletionOutcome outcome = cleanupService.deleteUploadFile(
+                uploadDir.resolve("missing.png").toString()
+        );
+
+        assertThat(outcome).isEqualTo(DetectionUploadCleanupService.FileDeletionOutcome.MISSING);
+    }
+
+    @Test
+    void directDeletionRejectsPathOutsideUploadDirectory() throws Exception {
+        Path uploadDir = tempDir.resolve("uploads");
+        Files.createDirectories(uploadDir);
+        Path outsideFile = tempDir.resolve("outside-direct.png");
+        Files.write(outsideFile, new byte[] {1, 2, 3});
+        DetectionUploadCleanupService cleanupService = new DetectionUploadCleanupService(
+                mock(DetectionRequestRepository.class),
+                properties(uploadDir)
+        );
+
+        DetectionUploadCleanupService.FileDeletionOutcome outcome = cleanupService.deleteUploadFile(
+                outsideFile.toString()
+        );
+
+        assertThat(outcome).isEqualTo(DetectionUploadCleanupService.FileDeletionOutcome.REJECTED);
+        assertThat(outsideFile).exists();
+    }
+
+    @Test
+    void failedDeletionIsRetriedByTheCleanupJob() throws Exception {
+        Path uploadDir = tempDir.resolve("uploads");
+        Path nonEmptyDirectory = uploadDir.resolve("orphan-entry");
+        Files.createDirectories(nonEmptyDirectory);
+        Path child = nonEmptyDirectory.resolve("still-in-use.bin");
+        Files.write(child, new byte[] {1, 2, 3});
+        DetectionUploadCleanupService cleanupService = new DetectionUploadCleanupService(
+                mock(DetectionRequestRepository.class),
+                properties(uploadDir)
+        );
+
+        DetectionUploadCleanupService.FileDeletionOutcome firstAttempt = cleanupService.deleteUploadFile(
+                nonEmptyDirectory.toString()
+        );
+
+        assertThat(firstAttempt).isEqualTo(DetectionUploadCleanupService.FileDeletionOutcome.FAILED);
+        assertThat(cleanupService.pendingDeletionRetryCount()).isEqualTo(1);
+
+        Files.delete(child);
+        assertThat(cleanupService.retryFailedDeletions()).isEqualTo(1);
+        assertThat(cleanupService.pendingDeletionRetryCount()).isZero();
+        assertThat(nonEmptyDirectory).doesNotExist();
+    }
+
     private AppProperties properties(Path uploadDir) {
         AppProperties properties = new AppProperties();
         properties.setUploadDir(uploadDir.toString());

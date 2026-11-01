@@ -64,18 +64,27 @@ function showNotice(message, isError = false) {
 }
 
 document.getElementById('clear-cache-btn').addEventListener('click', () => {
+    const clearButton = document.getElementById('clear-cache-btn');
+    clearButton.disabled = true;
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const tab = tabs && tabs[0];
         if (!tab || tab.id === undefined) {
             showNotice("현재 탭을 찾을 수 없습니다.", true);
+            clearButton.disabled = false;
             return;
         }
         chrome.tabs.sendMessage(tab.id, { action: "clear_cache_and_rescan" }, (response) => {
-            if (chrome.runtime.lastError || !response || !response.success) {
+            clearButton.disabled = false;
+            if (chrome.runtime.lastError || !response) {
                 showNotice("이 페이지에서는 사용할 수 없습니다.", true);
                 return;
             }
-            showNotice("캐시를 비웠습니다.");
+            if (!response.success) {
+                showNotice(response.message || "검사 기록을 삭제하지 못했습니다.", true);
+                return;
+            }
+            showNotice("검사 기록과 캐시를 비웠습니다.");
+            loadStatistics();
         });
     });
 });

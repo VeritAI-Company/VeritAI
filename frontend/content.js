@@ -1,7 +1,14 @@
 import { FEEDBACK_URL, MAX_CONCURRENT_INSPECTIONS, MAX_CACHE_SIZE, GLOBAL_AD_SELECTOR } from './config/constants';
 import { injectCSS, VERITAI_CORE_CSS } from './ui/styles.js';
 import { captureImageBlob, captureVideoBlob } from './core/capture.js';
-import { sendToBackend, clearPendingPolls } from './core/network.js';
+import {
+    sendToBackend,
+    clearPendingPolls,
+    deleteDetectionRecords,
+    getStoredDetectionRequestIds,
+    clearStoredDetectionRequestIds,
+} from './core/network.js';
+import { cacheDeletionErrorMessage, clearDetectionCacheFlow } from './core/cache-clear.js';
 
 console.log("VeritAI content script loaded");
 
@@ -1659,15 +1666,41 @@ function recordInspectionStat(isFake) {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "clear_cache_and_rescan") {
-        scanCache.forEach(releaseFrameUrl);
-        scanCache.clear();      
-        scannedMediaKeys.clear(); 
-        clearAllUI();            
-        if (isSystemOn) {
-            injectDropzone();
-            document.querySelectorAll('img, video').forEach(media => attachUI(media));
-        }
-        sendResponse({ success: true });
+        (async () => {
+            try {
+                const today = new Date().toLocaleDateString();
+                const deletion = await clearDetectionCacheFlow({
+                    getStoredRequestIds: getStoredDetectionRequestIds,
+                    deleteRecords: deleteDetectionRecords,
+                    clearStoredRequestIds: clearStoredDetectionRequestIds,
+                    clearMemoryCache: () => {
+                        scanCache.forEach(releaseFrameUrl);
+                        scanCache.clear();
+                        scannedMediaKeys.clear();
+                    },
+                    clearUi: clearAllUI,
+                    resetStatistics: () => chrome.storage.local.set({
+                        veritai_stat_date: today,
+                        veritai_stat_scanned: 0,
+                        veritai_stat_blocked: 0,
+                    }),
+                    reattachUi: () => {
+                        if (isSystemOn) {
+                            injectDropzone();
+                            document.querySelectorAll('img, video').forEach(media => attachUI(media));
+                        }
+                    },
+                });
+                sendResponse({ success: true, deletion });
+            } catch (error) {
+                sendResponse({
+                    success: false,
+                    status: error?.status,
+                    message: cacheDeletionErrorMessage(error),
+                });
+            }
+        })();
+        return true;
     } 
     else if (request.action === "context_menu_inspect") {
         const targetSrc = request.srcUrl;

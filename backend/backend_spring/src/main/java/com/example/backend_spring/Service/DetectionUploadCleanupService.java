@@ -13,7 +13,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class DetectionUploadCleanupService {
@@ -22,6 +24,7 @@ public class DetectionUploadCleanupService {
 
     private final DetectionRequestRepository detectionRequestRepository;
     private final AppProperties appProperties;
+    private final Set<Path> pendingDeletionRetries = ConcurrentHashMap.newKeySet();
 
     public DetectionUploadCleanupService(
             DetectionRequestRepository detectionRequestRepository,
@@ -33,7 +36,19 @@ public class DetectionUploadCleanupService {
 
     @Scheduled(fixedDelayString = "${app.detection.upload-cleanup-interval-ms:3600000}")
     public void cleanupExpiredUploadsOnSchedule() {
+        retryFailedDeletions();
         cleanupExpiredUploads();
+    }
+
+    public int retryFailedDeletions() {
+        int deletedCount = 0;
+        for (Path path : new ArrayList<>(pendingDeletionRetries)) {
+            FileDeletionOutcome outcome = deleteUploadFile(path.toString());
+            if (outcome == FileDeletionOutcome.DELETED) {
+                deletedCount += 1;
+            }
+        }
+        return deletedCount;
     }
 
     public int cleanupExpiredUploads() {
@@ -52,30 +67,56 @@ public class DetectionUploadCleanupService {
                 terminalStatuses,
                 cutoff
         )) {
-            if (deleteIfUploadFile(request.getFilePath())) {
+            if (deleteUploadFile(request.getFilePath()) == FileDeletionOutcome.DELETED) {
                 deletedCount += 1;
             }
         }
         return deletedCount;
     }
 
-    private boolean deleteIfUploadFile(String rawFilePath) {
+    public FileDeletionOutcome deleteUploadFile(String rawFilePath) {
         if (rawFilePath == null || rawFilePath.isBlank()) {
-            return false;
+            return FileDeletionOutcome.MISSING;
         }
 
         Path uploadRoot = Paths.get(appProperties.getUploadDir()).toAbsolutePath().normalize();
         Path filePath = Paths.get(rawFilePath).toAbsolutePath().normalize();
         if (!filePath.startsWith(uploadRoot)) {
+            pendingDeletionRetries.remove(filePath);
             log.warn("Skip upload cleanup outside upload directory: {}", filePath);
-            return false;
+            return FileDeletionOutcome.REJECTED;
         }
 
         try {
-            return Files.deleteIfExists(filePath);
+            if (!Files.exists(filePath)) {
+                pendingDeletionRetries.remove(filePath);
+                return FileDeletionOutcome.MISSING;
+            }
+            Path realUploadRoot = Files.exists(uploadRoot) ? uploadRoot.toRealPath() : uploadRoot;
+            Path realFilePath = filePath.toRealPath();
+            if (!realFilePath.startsWith(realUploadRoot)) {
+                pendingDeletionRetries.remove(filePath);
+                log.warn("Skip upload cleanup through path outside upload directory: {}", realFilePath);
+                return FileDeletionOutcome.REJECTED;
+            }
+            Files.delete(realFilePath);
+            pendingDeletionRetries.remove(filePath);
+            return FileDeletionOutcome.DELETED;
         } catch (IOException e) {
+            pendingDeletionRetries.add(filePath);
             log.warn("Failed to delete expired upload file: {}", filePath, e);
-            return false;
+            return FileDeletionOutcome.FAILED;
         }
+    }
+
+    int pendingDeletionRetryCount() {
+        return pendingDeletionRetries.size();
+    }
+
+    public enum FileDeletionOutcome {
+        DELETED,
+        MISSING,
+        REJECTED,
+        FAILED
     }
 }
