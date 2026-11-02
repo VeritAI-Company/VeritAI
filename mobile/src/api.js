@@ -1,5 +1,7 @@
 import { API_BASE, CLIENT_TYPE } from './config';
 
+// 요청 간격과 시간 제한은 웹의 shared/api.js와 같은 값이다 (앱은 빌드 구조상 그 파일을 가져올 수 없다)
+
 const DETECTIONS_URL = `${API_BASE}/api/detections`;
 const UPLOAD_TIMEOUT_MS = 20000;
 const POLL_INITIAL_INTERVAL_MS = 300;
@@ -109,7 +111,12 @@ export function toErrorDetail(err) {
 
 export function toFriendlyMessage(err) {
     const status = err?.status ?? 0;
-    if (status === 0) return '서버에 연결할 수 없습니다.\nPC에서 백엔드가 켜져 있는지, adb reverse tcp:8080 tcp:8080 을 했는지 확인해 주세요.';
+    if (status === 0) {
+        // 개발용 안내(adb reverse)는 개발 빌드에서만 보여 준다
+        return __DEV__
+            ? '서버에 연결할 수 없습니다.\nPC에서 백엔드가 켜져 있는지, adb reverse tcp:8080 tcp:8080 을 했는지 확인해 주세요.'
+            : '서버에 연결할 수 없습니다.\n인터넷 연결을 확인하고 잠시 후 다시 시도해 주세요.';
+    }
     if (status === 429) return '요청이 많습니다. 잠시 후 다시 시도해 주세요.';
     if (status === 408) return '응답이 늦어지고 있습니다. 잠시 후 다시 시도해 주세요.';
     if (status === 400 || status === 415) return '지원하지 않는 이미지입니다. 다른 사진으로 시도해 주세요.';

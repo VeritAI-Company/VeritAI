@@ -5,6 +5,10 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig({
   root: resolve(__dirname, 'portal'),
   publicDir: resolve(__dirname, 'portal/public'),
+  // 분석 서버 주소(VITE_API_BASE)는 프로젝트 루트 .env 에서 읽는다 (크롬 확장과 같은 파일)
+  envDir: resolve(__dirname),
+  // portal 폴더 밖의 공통 코드(shared/)를 개발 서버에서도 읽을 수 있게 한다
+  server: { fs: { allow: [resolve(__dirname)] } },
   build: {
     outDir: resolve(__dirname, 'dist-portal'),
     emptyOutDir: true,

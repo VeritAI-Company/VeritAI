@@ -6,13 +6,13 @@
   --border: #334056;
   --text: #e3e8ef;
   --text-sub: #a8b3c4;
-  --muted: #7a879b;
+  --muted: #8b97aa;
   --accent: #6f9be8;
   --real: #52c08c;
   --fake: #ef6f72;
   --warn: #e2a64a;
   --track: #2e394b;
-  --btn-bg: #4f7fd1;
+  --btn-bg: #3f6fc4;
   --btn-text: #ffffff;
   --focus: #8fb3f0;
   --radius: 12px;
@@ -66,7 +66,7 @@ main { max-width: 480px; margin: 0 auto; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:focus-visible, .chip:focus-visible, .heatmap-view-btn:focus-visible, .face-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .btn-primary { background: var(--btn-bg); color: var(--btn-text); }
-.btn-primary:active { background: #4572c2; }
+.btn-primary:active { background: #3762b0; }
 .btn-secondary { background: transparent; border-color: var(--border); }
 .btn-secondary:active { background: var(--raised); }
 .btn-ghost { background: transparent; color: var(--text-sub); font-weight: 500; min-height: 44px; }

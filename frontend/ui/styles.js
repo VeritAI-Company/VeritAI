@@ -7,9 +7,9 @@ const THEMED = `.veritai-details-box, #veritai-mini-hint, #veritai-dropzone-wrap
 
 export const VERITAI_CORE_CSS = `
     ${THEMED} {
-        --vr-bg: #1b2331; --vr-surface: #232d3d; --vr-border: #334056; --vr-text: #e3e8ef; --vr-sub: #a8b3c4; --vr-muted: #7a879b;
+        --vr-bg: #1b2331; --vr-surface: #232d3d; --vr-border: #334056; --vr-text: #e3e8ef; --vr-sub: #a8b3c4; --vr-muted: #8b97aa;
         --vr-accent: #6f9be8; --vr-fake: #ef6f72; --vr-real: #52c08c; --vr-warn: #e2a64a; --vr-track: #2e394b;
-        --vr-btn-bg: #4f7fd1; --vr-btn-text: #ffffff; --vr-shadow: 0 12px 32px rgba(8, 12, 20, 0.45);
+        --vr-btn-bg: #3f6fc4; --vr-btn-text: #ffffff; --vr-shadow: 0 12px 32px rgba(8, 12, 20, 0.45);
     }
 
     @keyframes veritai-spin { to { transform: rotate(360deg); } }

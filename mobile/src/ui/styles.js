@@ -1,0 +1,89 @@
+// 앱 화면 스타일 (색은 src/theme.js)
+import { StyleSheet } from 'react-native';
+
+export function makeStyles(colors) {
+    return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: colors.bg },
+    container: { padding: 16, paddingBottom: 32 },
+    gap: { gap: 12 },
+    center: { alignItems: 'center' },
+    rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+
+    header: { marginTop: 4, marginBottom: 18 },
+    title: { fontSize: 20, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
+    subtitle: { marginTop: 2, fontSize: 12, color: colors.textSub },
+
+    card: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 12, padding: 16 },
+    startTitle: { fontSize: 17, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
+    cardTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
+    sectionTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
+    bold: { fontWeight: '700', color: colors.text },
+    muted: { fontSize: 13, color: colors.textSub },
+    bodyText: { fontSize: 14, lineHeight: 21, color: colors.textSub },
+    linkText: { fontSize: 13, color: colors.accent, fontWeight: '600' },
+
+    btn: { alignSelf: 'stretch', minHeight: 48, borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
+    btnPrimary: { backgroundColor: colors.primary },
+    btnSecondary: { backgroundColor: 'transparent', borderColor: colors.border },
+    btnGhost: { backgroundColor: 'transparent', minHeight: 44 },
+    btnText: { color: colors.text, fontSize: 15, fontWeight: '600', textAlign: 'center' },
+    btnTextPrimary: { color: colors.onPrimary },
+    btnTextGhost: { color: colors.textSub, fontWeight: '500' },
+
+    tip: { borderColor: colors.border, borderWidth: 1, borderRadius: 10, padding: 12 },
+    tipText: { fontSize: 13, lineHeight: 20, color: colors.textSub },
+
+    historyItem: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.border },
+    historyHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    dot: { width: 7, height: 7, borderRadius: 4 },
+    historyVerdict: { fontSize: 15, fontWeight: '700' },
+    historyMeta: { marginTop: 2, fontSize: 13, color: colors.textSub },
+    historyDate: { marginTop: 2, fontSize: 12, color: colors.textMuted },
+    privacy: { fontSize: 12, lineHeight: 18, color: colors.textMuted, textAlign: 'center' },
+
+    badgeInfo: { alignSelf: 'flex-start', marginBottom: 8, fontSize: 12, color: colors.textSub, fontWeight: '600' },
+    preview: { width: '100%', borderRadius: 6, backgroundColor: '#000' },
+    frameOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 6, backgroundColor: 'rgba(18,20,23,0.6)', alignItems: 'center', justifyContent: 'center', gap: 8 },
+    frameOverlayText: { fontSize: 13, color: colors.text, fontWeight: '600' },
+    framePicker: { marginTop: 12, gap: 8 },
+    frameHint: { fontSize: 12, color: colors.textSub },
+    frameRow: { flexDirection: 'row', gap: 8 },
+    frameBtn: { flex: 1, minHeight: 40, borderRadius: 8, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+    frameBtnText: { fontSize: 14, color: colors.text, fontWeight: '600' },
+    frameError: { marginTop: 8, fontSize: 12, color: colors.warn },
+
+    loadingCard: { paddingVertical: 40, gap: 10 },
+    loadingText: { marginTop: 6, fontSize: 16, fontWeight: '600', color: colors.text },
+
+    verdict: { paddingVertical: 18, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+    verdictTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.4 },
+    verdictDesc: { marginTop: 2, fontSize: 14, color: colors.textSub },
+    meterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 14, marginBottom: 6 },
+    meterLabel: { fontSize: 13, color: colors.textSub },
+    meterValue: { fontSize: 15, fontWeight: '700', color: colors.text },
+    track: { height: 8, borderRadius: 4, backgroundColor: colors.track, overflow: 'hidden' },
+    fill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4 },
+    meterScale: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 },
+    scaleText: { fontSize: 11, color: colors.textMuted },
+    verdictMeta: { marginTop: 10, fontSize: 13, color: colors.textMuted },
+    faceList: { borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: 16, paddingVertical: 4 },
+    faceItem: { paddingVertical: 12 },
+    faceItemBorder: { borderTopWidth: 1, borderTopColor: colors.border },
+    faceRowLine: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    faceName: { width: 48, fontSize: 14, fontWeight: '600', color: colors.text },
+    faceTrack: { flex: 1, height: 6 },
+    faceProb: { width: 44, textAlign: 'right', fontSize: 14, fontWeight: '600' },
+    faceInfo: { marginTop: 4, marginLeft: 60, fontSize: 12, color: colors.textMuted },
+    faceToggle: { alignSelf: 'center', paddingVertical: 8 },
+    requestId: { fontSize: 11, color: colors.textMuted, textAlign: 'center' },
+
+    errorCard: { paddingVertical: 24 },
+    errorTitle: { fontSize: 16, fontWeight: '700', color: colors.warn },
+    errorText: { fontSize: 15, lineHeight: 23, color: colors.text, textAlign: 'center' },
+    errorDetail: { fontSize: 12, lineHeight: 18, color: colors.textMuted, textAlign: 'center' },
+    urlText: { fontSize: 13, color: colors.textSub },
+
+    reportBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
+    reportTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
+});
+}

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Deepfake Detector",
+  "name": "VeritAI - Deepfake Detector",
   "version": "1.1",
   "description": "Detect deepfake images or video frames on web pages.",
   "icons": {
