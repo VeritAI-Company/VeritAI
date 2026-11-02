@@ -6,13 +6,13 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#0F172A",
+    "backgroundColor": "#19202D",
     "icon": "./assets/icon.png",
     "android": {
       "package": "com.veritai.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0F172A"
+        "backgroundColor": "#19202D"
       }
     },
     "ios": {

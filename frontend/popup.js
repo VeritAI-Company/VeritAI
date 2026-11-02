@@ -22,14 +22,11 @@ function updateUI() {
     autoToggle.disabled = !sysOn;
     cleanToggle.disabled = !sysOn;
     
+    statusText.className = '';
     if (!sysOn) {
-        statusText.innerText = "시스템이 중지되었습니다";
-        statusText.style.color = "#94A3B8"; 
-        statusText.style.background = "transparent";
+        statusText.innerText = "꺼져 있습니다. 사진에 아무것도 표시하지 않습니다.";
     } else {
-        statusText.innerText = autoOn ? "자동 스캔 모드 활성화됨" : "수동 스캔 모드 활성화됨";
-        statusText.style.color = "#3B82F6"; 
-        statusText.style.background = "rgba(59, 130, 246, 0.1)";
+        statusText.innerText = autoOn ? "보이는 사진을 자동으로 검사합니다." : "사진의 검사 버튼을 눌러 검사합니다.";
     }
 }
 
@@ -58,8 +55,7 @@ let noticeTimer = null;
 function showNotice(message, isError = false) {
     clearTimeout(noticeTimer);
     statusText.innerText = message;
-    statusText.style.color = isError ? "#F87171" : "#10B981";
-    statusText.style.background = isError ? "rgba(239, 68, 68, 0.1)" : "rgba(16, 185, 129, 0.1)";
+    statusText.className = isError ? 'is-error' : 'is-ok';
     noticeTimer = setTimeout(updateUI, 2500);
 }
 

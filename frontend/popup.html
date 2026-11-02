@@ -4,81 +4,90 @@
   <meta charset="UTF-8">
   <title>VeritAI</title>
   <style>
-    body { width: 280px; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; background-color: #0F172A; color: #F8FAFC; margin: 0; }
-    h3 { margin-top: 0; margin-bottom: 24px; color: #3B82F6; font-size: 19px; font-weight: 700; letter-spacing: -0.5px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-    
-    .toggle-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 14px; background: #1E293B; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: 0.3s; }
-    .toggle-container:hover { border-color: #475569; }
-    .toggle-label { font-size: 13px; font-weight: 600; color: #CBD5E1; }
-    
-    .switch { position: relative; display: inline-block; width: 46px; height: 26px; }
-    .switch input { opacity: 0; width: 0; height: 0; }
-    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #475569; transition: .4s cubic-bezier(0.4, 0.0, 0.2, 1); border-radius: 26px; }
-    .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .4s cubic-bezier(0.4, 0.0, 0.2, 1); border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-    
-    input:checked + .slider { background-color: #3B82F6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.4); }
-    input:checked + .slider:before { transform: translateX(20px); }
-    input:disabled + .slider { opacity: 0.5; cursor: not-allowed; }
-    
-    #status-text { font-size: 13px; margin-top: 18px; font-weight: 600; padding: 8px; border-radius: 8px; background: rgba(59, 130, 246, 0.1); }
-    
-    .report-section { margin-top: 24px; padding-top: 16px; border-top: 1px dashed #334155; text-align: center; }
-    .version-text { font-size: 11px; color: #64748B; margin-bottom: 12px; font-weight: 500; }
-    .report-link { display: block; width: 100%; padding: 10px; font-size: 12px; font-weight: 600; color: #E2E8F0; text-decoration: none; border: 1px solid #334155; border-radius: 8px; transition: all 0.2s ease; cursor: pointer; background: #1E293B; box-sizing: border-box; }
-    .report-link:hover { background: #3B82F6; color: white; border-color: #3B82F6; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+    :root {
+      --bg: #1b2331; --surface: #232d3d; --border: #334056; --text: #e3e8ef; --sub: #a8b3c4; --muted: #7a879b;
+      --fake: #ef6f72; --real: #52c08c; --track: #3a465b; --on: #4f7fd1; --knob-on: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body { width: 300px; margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+      font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+    button { font: inherit; }
 
-    .dashboard-container { display: flex; gap: 12px; margin-bottom: 20px; }
-    .stat-box { flex: 1; background: #1E293B; border: 1px solid #334155; border-radius: 12px; padding: 12px 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .stat-box.warning { border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.05); }
-    .stat-value { font-size: 24px; font-weight: 800; color: #F8FAFC; margin-bottom: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-    .stat-value.warning-text { color: #EF4444; }
-    .stat-label { font-size: 11px; font-weight: 600; color: #94A3B8; }
+    .head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .head svg { width: 20px; height: 20px; color: #8fb3f0; }
+    .head h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.2px; }
+    .head .ver { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+    .stats { display: grid; grid-template-columns: 1fr 1fr; background: var(--surface); border-radius: 10px; margin-bottom: 14px; }
+    .stat { padding: 10px 12px; }
+    .stat + .stat { border-left: 1px solid var(--border); }
+    .stat-value { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+    .stat-value.is-fake { color: var(--fake); }
+    .stat-label { font-size: 11px; color: var(--sub); }
+
+    .settings { border: 1px solid var(--border); border-radius: 10px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; }
+    .row + .row { border-top: 1px solid var(--border); }
+    .row-title { font-weight: 600; }
+    .row-desc { font-size: 11px; color: var(--sub); }
+
+    .switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; background: var(--track); border-radius: 20px; cursor: pointer; transition: background 0.15s ease; }
+    .slider:before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: transform 0.15s ease; }
+    input:checked + .slider { background: var(--on); }
+    input:checked + .slider:before { transform: translateX(16px); background: var(--knob-on); }
+    input:disabled + .slider { opacity: 0.4; cursor: not-allowed; }
+    input:focus-visible + .slider { outline: 2px solid #8fb3ff; outline-offset: 2px; }
+
+    #status-text { margin: 10px 2px 0; font-size: 12px; color: var(--sub); min-height: 18px; }
+    #status-text.is-ok { color: var(--real); }
+    #status-text.is-error { color: var(--fake); }
+
+    .links { display: flex; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .link-btn { flex: 1; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
+    .link-btn:hover { background: var(--surface); }
+    .link-btn:focus-visible { outline: 2px solid #8fb3ff; outline-offset: 2px; }
   </style>
 </head>
 <body>
-  <h3>VeritAI 시스템</h3>
-  
-  <div class="dashboard-container">
-    <div class="stat-box">
+  <div class="head">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4.5 6v6c0 4.5 3.2 7.7 7.5 9 4.3-1.3 7.5-4.5 7.5-9V6L12 3Z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/></svg>
+    <h1>VeritAI</h1>
+    <span class="ver">v1.1</span>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
       <div class="stat-value" id="stat-scanned">0</div>
-      <div class="stat-label">오늘 검사한 이미지</div>
+      <div class="stat-label">오늘 검사한 사진</div>
     </div>
-    <div class="stat-box warning">
-      <div class="stat-value warning-text" id="stat-blocked">0</div>
-      <div class="stat-label">차단된 조작 의심</div>
+    <div class="stat">
+      <div class="stat-value is-fake" id="stat-blocked">0</div>
+      <div class="stat-label">조작 의심</div>
     </div>
   </div>
-  
-  <div class="toggle-container">
-    <span class="toggle-label">실시간 감지 전원</span>
-    <label class="switch">
-      <input type="checkbox" id="system-toggle">
-      <span class="slider"></span>
+
+  <div class="settings">
+    <label class="row">
+      <span><span class="row-title">VeritAI 켜기</span><br><span class="row-desc">사진에 검사 버튼과 결과를 표시합니다</span></span>
+      <span class="switch"><input type="checkbox" id="system-toggle"><span class="slider"></span></span>
+    </label>
+    <label class="row">
+      <span><span class="row-title">자동 검사</span><br><span class="row-desc">보이는 사진을 차례로 검사합니다</span></span>
+      <span class="switch"><input type="checkbox" id="auto-toggle"><span class="slider"></span></span>
+    </label>
+    <label class="row">
+      <span><span class="row-title">정상 결과 숨기기</span><br><span class="row-desc">조작 의심만 표시합니다</span></span>
+      <span class="switch"><input type="checkbox" id="clean-toggle"><span class="slider"></span></span>
     </label>
   </div>
 
-  <div class="toggle-container">
-    <span class="toggle-label">자동 스캔 모드</span>
-    <label class="switch">
-      <input type="checkbox" id="auto-toggle">
-      <span class="slider"></span>
-    </label>
-  </div>
+  <div id="status-text" role="status">설정을 불러오는 중</div>
 
-  <div class="toggle-container" title="정상 판정된 이미지는 표시하지 않습니다">
-    <span class="toggle-label">클린 모드 (정상 숨김)</span>
-    <label class="switch">
-      <input type="checkbox" id="clean-toggle">
-      <span class="slider"></span>
-    </label>
-  </div>
-  
-  <div id="status-text">설정 로딩 중...</div>
-
-  <div class="report-section">
-    <div class="version-text">V 1.1 (엔진: v1)</div>
-    <button id="feedback-link" class="report-link">💡 서비스 건의 및 버그 제보</button>
-    <button id="clear-cache-btn" class="report-link" style="margin-top: 12px;">🧹 캐시 비우기</button>
+  <div class="links">
+    <button id="feedback-link" class="link-btn">의견 보내기</button>
+    <button id="clear-cache-btn" class="link-btn">캐시 비우기</button>
   </div>
 
   <script type="module" src="popup.js"></script>

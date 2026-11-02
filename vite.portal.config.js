@@ -18,8 +18,8 @@ export default defineConfig({
         name: 'VeritAI Mobile Portal',
         short_name: 'VeritAI',
         description: '실시간 딥페이크 탐지 모바일 포털',
-        theme_color: '#0F172A',
-        background_color: '#0F172A',
+        theme_color: '#19202d',
+        background_color: '#19202d',
         display: 'standalone',
         start_url: '/',
         icons: [
