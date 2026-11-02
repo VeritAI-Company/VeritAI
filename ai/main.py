@@ -5,11 +5,24 @@ import os
 import threading
 import time
 import uuid
+import sys
+import types
+import importlib.util
+from pathlib import Path
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+
+# MediaPipe imports matplotlib only for optional drawing helpers. The service
+# never uses those helpers, so allow a lean inference environment without it.
+if importlib.util.find_spec("matplotlib") is None:
+    matplotlib_stub = types.ModuleType("matplotlib")
+    pyplot_stub = types.ModuleType("matplotlib.pyplot")
+    matplotlib_stub.pyplot = pyplot_stub
+    sys.modules.setdefault("matplotlib", matplotlib_stub)
+    sys.modules.setdefault("matplotlib.pyplot", pyplot_stub)
 
 try:
     import mediapipe as mp
@@ -50,13 +63,8 @@ for directory in (
 ):
     os.makedirs(directory, exist_ok=True)
 
-CASCADE_BASE = cv2.data.haarcascades
-FACE_CASCADES = {
-    "frontal": cv2.CascadeClassifier(os.path.join(CASCADE_BASE, "haarcascade_frontalface_default.xml")),
-    "frontal_alt": cv2.CascadeClassifier(os.path.join(CASCADE_BASE, "haarcascade_frontalface_alt2.xml")),
-    "profile": cv2.CascadeClassifier(os.path.join(CASCADE_BASE, "haarcascade_profileface.xml")),
-}
 MP_FACE_DETECTOR = None
+MP_FACE_DETECTOR_ERROR = None
 MP_FACE_DETECTOR_LOCK = threading.Lock()
 if mp is not None:
     try:
@@ -64,26 +72,37 @@ if mp is not None:
             model_selection=1,
             min_detection_confidence=0.45,
         )
-    except Exception:
+    except Exception as exc:
+        MP_FACE_DETECTOR_ERROR = str(exc)
         MP_FACE_DETECTOR = None
 MP_FACE_LANDMARKER = None
+MP_FACE_LANDMARKER_ERROR = None
 MP_FACE_LANDMARKER_LOCK = threading.Lock()
 MP_FACE_LANDMARKER_MODEL = os.getenv(
     "VERITAI_MEDIAPIPE_FACE_LANDMARKER_MODEL",
     os.path.join(BASE_DIR, "models", "face_landmarker.task"),
 )
+try:
+    MP_FACE_LANDMARKER_MAX_FACES = max(
+        1, int(os.getenv("VERITAI_MEDIAPIPE_MAX_FACES", "8"))
+    )
+except ValueError:
+    MP_FACE_LANDMARKER_MAX_FACES = 8
 if mp is not None and hasattr(mp, "tasks") and os.path.exists(MP_FACE_LANDMARKER_MODEL):
     try:
         MP_FACE_LANDMARKER = mp.tasks.vision.FaceLandmarker.create_from_options(
             mp.tasks.vision.FaceLandmarkerOptions(
-                base_options=mp.tasks.BaseOptions(model_asset_path=MP_FACE_LANDMARKER_MODEL),
+                base_options=mp.tasks.BaseOptions(
+                    model_asset_buffer=Path(MP_FACE_LANDMARKER_MODEL).read_bytes()
+                ),
                 running_mode=mp.tasks.vision.RunningMode.IMAGE,
-                num_faces=2,
+                num_faces=MP_FACE_LANDMARKER_MAX_FACES,
                 min_face_detection_confidence=0.35,
                 min_face_presence_confidence=0.35,
             )
         )
-    except Exception:
+    except Exception as exc:
+        MP_FACE_LANDMARKER_ERROR = str(exc)
         MP_FACE_LANDMARKER = None
 YUNET_FACE_MODEL = os.getenv(
     "VERITAI_YUNET_FACE_MODEL",
@@ -285,13 +304,6 @@ def non_max_suppression(candidates, iou_threshold=0.35):
         selected.append(current)
         remaining = [candidate for candidate in remaining if calculate_iou(current["box"], candidate["box"]) < iou_threshold]
     return selected
-
-
-def normalize_weight(weight, fallback=0.58):
-    if weight is None:
-        return fallback
-    clamped = max(float(weight), 0.0)
-    return float(max(0.0, min(1.0, 1.0 - math.exp(-clamped / 10.0))))
 
 
 def normalize_response(response):
@@ -695,46 +707,6 @@ def generate_low_priority_profile_region_proposals(preprocessed, existing_candid
     return non_max_suppression(proposals, iou_threshold=0.24)[:2]
 
 
-def detect_with_cascade(cascade, image, flipped=False, aggressive=False):
-    if cascade.empty():
-        return []
-    base_min_size = (max(34, image.shape[1] // 20), max(34, image.shape[0] // 20))
-    configs = [(1.08, 5, (max(40, image.shape[1] // 16), max(40, image.shape[0] // 16)))]
-    if aggressive:
-        configs.append((1.05, 4, base_min_size))
-        configs.append((1.03, 3, (max(30, image.shape[1] // 24), max(30, image.shape[0] // 24))))
-    image_width = image.shape[1]
-    candidates = []
-    for scale_factor, min_neighbors, min_size in configs:
-        try:
-            boxes, _, weights = cascade.detectMultiScale3(
-                image,
-                scaleFactor=scale_factor,
-                minNeighbors=min_neighbors,
-                minSize=min_size,
-                outputRejectLevels=True,
-            )
-            weight_list = list(weights) if weights is not None else []
-        except Exception:
-            boxes = cascade.detectMultiScale(
-                image,
-                scaleFactor=scale_factor,
-                minNeighbors=min_neighbors,
-                minSize=min_size,
-            )
-            weight_list = []
-        for index, (x, y, w, h) in enumerate(boxes):
-            if w < 34 or h < 34:
-                continue
-            if flipped:
-                x = image_width - (x + w)
-            weight = weight_list[index] if index < len(weight_list) else None
-            candidates.append(
-                {"box": (int(x), int(y), int(w), int(h)), "rawWeight": None if weight is None else float(weight)}
-            )
-    return candidates
-
-
 def detect_with_mediapipe(preprocessed):
     if MP_FACE_DETECTOR is None:
         return []
@@ -837,50 +809,70 @@ def detect_with_yunet(preprocessed):
     if image is None:
         return []
     image_h, image_w = image.shape[:2]
-    try:
-        with YUNET_FACE_DETECTOR_LOCK:
-            detector = cv2.FaceDetectorYN_create(
-                YUNET_FACE_MODEL,
-                "",
-                (int(image_w), int(image_h)),
-                score_threshold=0.72,
-                nms_threshold=0.30,
-                top_k=20,
-            )
-            _, detections = detector.detect(image)
-    except Exception:
-        return []
 
-    candidates = []
-    if detections is None:
-        return candidates
-    for row in detections:
-        x, y, w, h = [float(value) for value in row[:4]]
-        score = float(row[-1]) if len(row) >= 15 else 0.72
-        x = clamp(int(round(x)), 0, max(image_w - 1, 0))
-        y = clamp(int(round(y)), 0, max(image_h - 1, 0))
-        w = clamp(int(round(w)), 1, image_w - x)
-        h = clamp(int(round(h)), 1, image_h - y)
-        if min(w, h) < 34:
-            continue
-        landmarks = []
-        for index in range(4, min(14, len(row)), 2):
-            landmarks.append(
-                (
-                    clamp(int(round(float(row[index]))), 0, max(image_w - 1, 0)),
-                    clamp(int(round(float(row[index + 1]))), 0, max(image_h - 1, 0)),
+    def detect_region(region, offset_x=0, offset_y=0):
+        region_h, region_w = region.shape[:2]
+        try:
+            with YUNET_FACE_DETECTOR_LOCK:
+                detector = cv2.FaceDetectorYN_create(
+                    YUNET_FACE_MODEL,
+                    "",
+                    (int(region_w), int(region_h)),
+                    score_threshold=0.72,
+                    nms_threshold=0.30,
+                    top_k=20,
                 )
+                _, detections = detector.detect(region)
+        except Exception:
+            return []
+
+        region_candidates = []
+        if detections is None:
+            return region_candidates
+        for row in detections:
+            x, y, w, h = [float(value) for value in row[:4]]
+            score = float(row[-1]) if len(row) >= 15 else 0.72
+            x = clamp(int(round(x)) + offset_x, 0, max(image_w - 1, 0))
+            y = clamp(int(round(y)) + offset_y, 0, max(image_h - 1, 0))
+            w = clamp(int(round(w)), 1, image_w - x)
+            h = clamp(int(round(h)), 1, image_h - y)
+            if min(w, h) < 24:
+                continue
+            landmarks = []
+            for index in range(4, min(14, len(row)), 2):
+                landmarks.append(
+                    (
+                        clamp(int(round(float(row[index]))) + offset_x, 0, max(image_w - 1, 0)),
+                        clamp(int(round(float(row[index + 1]))) + offset_y, 0, max(image_h - 1, 0)),
+                    )
+                )
+            region_candidates.append(
+                {
+                    "box": (int(x), int(y), int(w), int(h)),
+                    "rawWeight": None,
+                    "detector": "yunet",
+                    "score": round(float(max(0.0, min(1.0, score))), 4),
+                    "yunetLandmarks": landmarks,
+                }
             )
-        candidates.append(
-            {
-                "box": (int(x), int(y), int(w), int(h)),
-                "rawWeight": None,
-                "detector": "yunet",
-                "score": round(float(max(0.0, min(1.0, score))), 4),
-                "yunetLandmarks": landmarks,
-            }
-        )
-    return candidates
+        return region_candidates
+
+    candidates = detect_region(image)
+    if not candidates and min(image_w, image_h) >= 320:
+        tile_w = max(160, int(round(image_w * 0.65)))
+        tile_h = max(160, int(round(image_h * 0.65)))
+        origins = {
+            (0, 0),
+            (image_w - tile_w, 0),
+            (0, image_h - tile_h),
+            (image_w - tile_w, image_h - tile_h),
+            ((image_w - tile_w) // 2, (image_h - tile_h) // 2),
+        }
+        for offset_x, offset_y in origins:
+            region = image[offset_y : offset_y + tile_h, offset_x : offset_x + tile_w]
+            candidates.extend(detect_region(region, offset_x, offset_y))
+
+    return non_max_suppression(candidates, iou_threshold=0.28)
 
 
 def detect_with_landmark_consensus(preprocessed):
@@ -915,76 +907,46 @@ def detect_with_landmark_consensus(preprocessed):
 
 def detect_faces(preprocessed):
     image = preprocessed["equalized"]
-    base_gray = preprocessed["gray"]
-    clahe = preprocessed.get("clahe", image)
-    flipped = cv2.flip(image, 1)
-    flipped_clahe = cv2.flip(clahe, 1)
-    candidates = []
-    candidates.extend(detect_with_mediapipe(preprocessed))
-    for detector_name, cascade in FACE_CASCADES.items():
-        if detector_name == "profile":
-            boxes = (
-                detect_with_cascade(cascade, image, aggressive=True)
-                + detect_with_cascade(cascade, clahe, aggressive=True)
-                + detect_with_cascade(cascade, base_gray, aggressive=True)
-                + detect_with_cascade(cascade, flipped, flipped=True, aggressive=True)
-                + detect_with_cascade(cascade, flipped_clahe, flipped=True, aggressive=True)
-                + detect_with_cascade(cascade, cv2.flip(base_gray, 1), flipped=True, aggressive=True)
-            )
-        else:
-            boxes = (
-                detect_with_cascade(cascade, image, aggressive=True)
-                + detect_with_cascade(cascade, clahe, aggressive=True)
-                + detect_with_cascade(cascade, base_gray, aggressive=True)
-            )
-        for candidate in boxes:
-            candidate["detector"] = detector_name
-            candidate["score"] = normalize_weight(candidate["rawWeight"], fallback=0.62 if detector_name.startswith("frontal") else 0.55)
-            candidates.append(candidate)
+    primary_groups = (
+        detect_with_yunet(preprocessed),
+        detect_with_mediapipe_landmarker(preprocessed),
+        detect_with_mediapipe(preprocessed),
+    )
+    candidates = [candidate for group in primary_groups for candidate in group]
+
+    # Prefer candidates independently supported by another modern detector. A
+    # strong candidate may still survive alone so a missing optional runtime
+    # does not disable face detection completely.
+    for candidate in candidates:
+        best_match = None
+        best_iou = 0.0
+        for other in candidates:
+            if other is candidate or other.get("detector") == candidate.get("detector"):
+                continue
+            iou = calculate_iou(candidate["box"], other["box"])
+            if iou > best_iou:
+                best_match = other
+                best_iou = iou
+        if best_match is not None and best_iou >= 0.35:
+            candidate["detectorConsensus"] = True
+            candidate["consensusDetector"] = best_match.get("detector")
+            candidate["consensusScore"] = best_match.get("score", 0.0)
+            candidate["consensusIoU"] = round(float(best_iou), 4)
+            candidate["consensusBox"] = best_match.get("box")
+
     candidates = non_max_suppression(candidates, iou_threshold=0.24)
     candidates = suppress_contained_candidates(candidates)
-    if not candidates or max(candidate["score"] for candidate in candidates) < 0.58 or len(candidates) < 2:
-        candidates.extend(generate_response_face_proposals(preprocessed))
-    low_priority_profile_candidates = []
-    if len(candidates) < 12:
-        low_priority_profile_candidates = generate_low_priority_profile_region_proposals(preprocessed, candidates)
-        candidates.extend(low_priority_profile_candidates)
-    if len(candidates) < 3:
-        candidates.extend(generate_dark_profile_silhouette_proposals(preprocessed))
+    if not candidates:
+        candidates = generate_response_face_proposals(preprocessed)
+
     refined = []
     for candidate in candidates:
         refined_box = candidate["box"] if candidate.get("preexpanded") else expand_detected_box(candidate["box"], image.shape, candidate["detector"])
         refined.append({**candidate, "box": refined_box})
     refined = non_max_suppression(refined, iou_threshold=0.28)
     refined = suppress_contained_candidates(refined)
-    protected_low_priority = []
-    for candidate in low_priority_profile_candidates:
-        expanded_box = candidate["box"] if candidate.get("preexpanded") else expand_detected_box(candidate["box"], image.shape, candidate["detector"])
-        expanded = {**candidate, "box": expanded_box}
-        if any(
-            existing.get("detector") == expanded.get("detector")
-            and calculate_iou(existing["box"], expanded["box"]) >= 0.90
-            for existing in refined
-        ):
-            continue
-        protected_low_priority.append(expanded)
-    if protected_low_priority:
-        refined.extend(protected_low_priority)
     refined.sort(key=lambda item: item.get("score", 0.0), reverse=True)
-    selected = refined[:MAX_FACE_CANDIDATES]
-    for protected in protected_low_priority:
-        if any(
-            existing.get("detector") == protected.get("detector")
-            and calculate_iou(existing["box"], protected["box"]) >= 0.90
-            for existing in selected
-        ):
-            continue
-        if len(selected) < MAX_FACE_CANDIDATES:
-            selected.append(protected)
-        elif selected:
-            selected[-1] = protected
-    selected.sort(key=lambda item: item.get("score", 0.0), reverse=True)
-    return selected
+    return refined[:MAX_FACE_CANDIDATES]
 
 
 def build_eye_response(face_gray, face_mask=None):
@@ -2674,6 +2636,37 @@ def should_keep_face(face):
     color_saturation_mean = float(texture.get("colorSaturationMean", 0.0))
     color_chroma_std = float(texture.get("colorChromaStd", 0.0))
     mouth_evidence = float(face.get("featureSummary", {}).get("mouthEvidence", 0.0))
+    trusted_modern_candidate = (
+        face.get("detector") in {"mediapipe_landmarker", "mediapipe", "yunet"}
+        and quality.get("label") in {"good", "usable"}
+        and quality.get("detectedPointRatio", 0.0) >= 0.75
+        and min(width, height) >= 48
+        and (
+            (
+                bool(face.get("detectorConsensus"))
+                and score >= 0.80
+                and float(face.get("consensusScore", 0.0)) >= 0.75
+            )
+            or (
+                face.get("detector") == "yunet"
+                and score >= 0.88
+                and face_like_score >= 0.72
+            )
+            or (
+                face.get("detector") == "mediapipe_landmarker"
+                and score >= 0.95
+                and face_like_score >= 0.72
+            )
+        )
+    )
+
+    # Modern detector agreement, or a very strong landmark-complete standalone
+    # detection, is stronger evidence than the legacy hand-tuned skin/closure
+    # heuristics below. Those heuristics were designed for Haar and response-map
+    # proposals and can incorrectly discard ordinary portraits.
+    if trusted_modern_candidate:
+        return True, "accepted-modern-detector"
+
     strong_rescue_face = (
         face_like_score >= 0.80
         and skin_ratio >= 0.88
@@ -4740,18 +4733,7 @@ def _resize_for_service(image_bgr):
 
 
 def _detect_service_face_candidates(img, preprocessed):
-    candidates = detect_faces(preprocessed)
-    if candidates:
-        return candidates
-    for rescue_detector in (
-        detect_with_landmark_consensus,
-        detect_with_mediapipe_landmarker,
-        detect_with_yunet,
-    ):
-        rescue_candidates = rescue_detector(preprocessed)
-        if rescue_candidates:
-            return rescue_candidates
-    return []
+    return detect_faces(preprocessed)
 
 
 def prepare_service_cnn_inputs(image_bgr, analysis_mode="face_crop_only", crop_zip_mode=False, timings=None):
@@ -4815,27 +4797,8 @@ def prepare_service_cnn_inputs(image_bgr, analysis_mode="face_crop_only", crop_z
     faces, debug_maps = build_face_output(img, preprocessed, candidates, request_uid, analysis_mode)
     if timings is not None:
         timings["faceOutputTimeMs"] = int((time.time() - face_output_started) * 1000)
-    rescue_time_ms = 0
-    if not faces and candidates:
-        for rescue_detector in (
-            detect_with_landmark_consensus,
-            detect_with_mediapipe_landmarker,
-            detect_with_yunet,
-        ):
-            rescue_started = time.time()
-            rescue_candidates = rescue_detector(preprocessed)
-            rescue_time_ms += int((time.time() - rescue_started) * 1000)
-            if not rescue_candidates:
-                continue
-            rescue_build_started = time.time()
-            faces, debug_maps = build_face_output(
-                img, preprocessed, rescue_candidates, request_uid, analysis_mode
-            )
-            rescue_time_ms += int((time.time() - rescue_build_started) * 1000)
-            if faces:
-                break
     if timings is not None:
-        timings["rescueTimeMs"] = rescue_time_ms
+        timings["rescueTimeMs"] = 0
         timings["faceCountAfterAnalysis"] = len(faces)
     return img, faces, debug_maps
 
@@ -4968,6 +4931,20 @@ async def predict(file: UploadFile = File(...), analysisMode: str = Form("full_i
     if "heatmap_array" in cnn_result:
         del cnn_result["heatmap_array"]
 
+    analysis_scope = cnn_result.get("analysisScope", "none")
+    if analysis_scope == "faces":
+        analysis_input = {
+            "detectionImage": "full_image",
+            "featureImage": "cropped_face",
+            "deepfakeImage": "cropped_face",
+        }
+    else:
+        analysis_input = {
+            "detectionImage": "full_image",
+            "featureImage": "full_image",
+            "deepfakeImage": "full_image",
+        }
+
     return {
         "isDeepfake": is_deepfake,
         "confidence": confidence,
@@ -4975,7 +4952,13 @@ async def predict(file: UploadFile = File(...), analysisMode: str = Form("full_i
         "watermarkDetected": False,
         "modelVersion": model_version,
         "analysisMode": normalized_mode,
-        "analysisInput": {"detectionImage": "full_image", "featureImage": "cropped_face", "deepfakeImage": "cropped_face"} if normalized_mode == "face_crop_only" else {"detectionImage": "full_image", "featureImage": "full_image", "deepfakeImage": "full_image"},
+        "analysisInput": analysis_input,
+        "analysisScope": analysis_scope,
+        "aggregationMethod": cnn_result.get("aggregationMethod", "none"),
+        "averageProbability": cnn_result.get("averageProbability", confidence),
+        "maxProbability": cnn_result.get("maxProbability", confidence),
+        "winningView": cnn_result.get("winningView"),
+        "decisionReason": cnn_result.get("decisionReason", "cnn_unavailable"),
         "timings": {"imageReadTimeMs": read_time_ms, "decodeTimeMs": decode_time_ms, **service_timings, "detectionTimeMs": detection_time_ms, "faceAnalysisTimeMs": face_analysis_time_ms, "debugArtifactTimeMs": debug_time_ms, "cnnTimeMs": cnn_time_ms, "totalTimeMs": processing_time_ms},
         "processingTimeMs": processing_time_ms,
         "message": message,

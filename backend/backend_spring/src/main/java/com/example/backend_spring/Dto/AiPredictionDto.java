@@ -16,6 +16,12 @@ public class AiPredictionDto {
     private String modelVersion;
     private String analysisMode;
     private Map<String, Object> analysisInput;
+    private String analysisScope;
+    private String aggregationMethod;
+    private double averageProbability;
+    private double maxProbability;
+    private String winningView;
+    private String decisionReason;
     private Map<String, Object> timings;
     private long processingTimeMs;
     private String message;
@@ -80,6 +86,54 @@ public class AiPredictionDto {
 
     public void setAnalysisInput(Map<String, Object> analysisInput) {
         this.analysisInput = analysisInput;
+    }
+
+    public String getAnalysisScope() {
+        return analysisScope;
+    }
+
+    public void setAnalysisScope(String analysisScope) {
+        this.analysisScope = analysisScope;
+    }
+
+    public String getAggregationMethod() {
+        return aggregationMethod;
+    }
+
+    public void setAggregationMethod(String aggregationMethod) {
+        this.aggregationMethod = aggregationMethod;
+    }
+
+    public double getAverageProbability() {
+        return averageProbability;
+    }
+
+    public void setAverageProbability(double averageProbability) {
+        this.averageProbability = averageProbability;
+    }
+
+    public double getMaxProbability() {
+        return maxProbability;
+    }
+
+    public void setMaxProbability(double maxProbability) {
+        this.maxProbability = maxProbability;
+    }
+
+    public String getWinningView() {
+        return winningView;
+    }
+
+    public void setWinningView(String winningView) {
+        this.winningView = winningView;
+    }
+
+    public String getDecisionReason() {
+        return decisionReason;
+    }
+
+    public void setDecisionReason(String decisionReason) {
+        this.decisionReason = decisionReason;
     }
 
     public Map<String, Object> getTimings() {

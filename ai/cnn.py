@@ -21,15 +21,11 @@ CHECKPOINT_PATH = Path(
 )
 MAX_IMAGE_WIDTH = int(os.getenv("VERITAI_MAX_IMAGE_WIDTH", "1280"))
 FAKE_THRESHOLD = float(os.getenv("VERITAI_CNN_FAKE_THRESHOLD", "0.5"))
+FACE_HIGH_MAX_THRESHOLD = float(os.getenv("VERITAI_CNN_HIGH_MAX_THRESHOLD", "0.8"))
+FULL_IMAGE_THRESHOLD = float(os.getenv("VERITAI_CNN_FULL_IMAGE_THRESHOLD", str(FAKE_THRESHOLD)))
 # train_colab.py: class 0=real, class 1=fake
 REAL_CLASS_INDEX = 0
 FAKE_CLASS_INDEX = 1
-# Service-aligned training zip (crop_all --pipeline service) includes __full.jpg by default.
-INCLUDE_FULL_VIEW = os.getenv("VERITAI_CNN_INCLUDE_FULL_VIEW", "1").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 # 히트맵 방식: gradcam(기본, 14x14) 또는 cam(예전 방식, 7x7)
@@ -132,13 +128,14 @@ def build_cnn_views_bgr(bgr: np.ndarray, faces: Sequence[Dict[str, Any]]) -> Lis
     CNN inputs aligned with POST /predict (crop_all --pipeline service).
 
     - face_N: build_face_output() bbox on MAX_IMAGE_WIDTH resized image
-    - full: included when VERITAI_CNN_INCLUDE_FULL_VIEW=1 (default; matches service zip)
+    - validated face crops are used exclusively when available
+    - full is used only when no usable face crop exists
     """
     full = normalize_bgr_width(bgr)
     views: List[CnnView] = []
-    if INCLUDE_FULL_VIEW:
-        views.append(CnnView("full", full))
     for index, face in enumerate(faces):
+        if face.get("quality", {}).get("label") == "poor":
+            continue
         bbox = normalize_bbox(face)
         if bbox is None:
             continue
@@ -152,7 +149,64 @@ def build_cnn_views_bgr(bgr: np.ndarray, faces: Sequence[Dict[str, Any]]) -> Lis
                 bbox,
             )
         )
-    return views
+    return views or [CnnView("full", full)]
+
+
+def aggregate_view_probabilities(view_results: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    if not view_results:
+        return {
+            "fakeProbability": 0.0,
+            "isDeepfake": False,
+            "analysisScope": "none",
+            "aggregationMethod": "none",
+            "averageProbability": 0.0,
+            "maxProbability": 0.0,
+            "winningView": None,
+            "decisionReason": "no_valid_views",
+        }
+
+    best = max(view_results, key=lambda item: float(item.get("fakeProbability", 0.0)))
+    max_probability = float(best.get("fakeProbability", 0.0))
+    average_probability = sum(
+        float(item.get("fakeProbability", 0.0)) for item in view_results
+    ) / len(view_results)
+    full_only = len(view_results) == 1 and view_results[0].get("name") == "full"
+
+    if full_only:
+        is_deepfake = max_probability >= FULL_IMAGE_THRESHOLD
+        confidence = max_probability
+        decision_reason = "full_image_threshold_met" if is_deepfake else "full_image_below_threshold"
+        analysis_scope = "full_fallback"
+        aggregation_method = "full_image_only"
+    elif max_probability >= FACE_HIGH_MAX_THRESHOLD:
+        is_deepfake = True
+        confidence = max_probability
+        decision_reason = "high_single_face_probability"
+        analysis_scope = "faces"
+        aggregation_method = "face_average_with_high_max_guard"
+    elif average_probability >= FAKE_THRESHOLD:
+        is_deepfake = True
+        confidence = average_probability
+        decision_reason = "high_average_face_probability"
+        analysis_scope = "faces"
+        aggregation_method = "face_average_with_high_max_guard"
+    else:
+        is_deepfake = False
+        confidence = average_probability
+        decision_reason = "below_combined_thresholds"
+        analysis_scope = "faces"
+        aggregation_method = "face_average_with_high_max_guard"
+
+    return {
+        "fakeProbability": round(float(confidence), 6),
+        "isDeepfake": bool(is_deepfake),
+        "analysisScope": analysis_scope,
+        "aggregationMethod": aggregation_method,
+        "averageProbability": round(float(average_probability), 6),
+        "maxProbability": round(float(max_probability), 6),
+        "winningView": best.get("name"),
+        "decisionReason": decision_reason,
+    }
 
 
 class CnnRuntime:
@@ -303,6 +357,7 @@ class CnnRuntime:
                 # 영역별 히트맵 숫자 표 (조작 확률을 곱한 값, 0~1)
                 "cam": cam_to_grid(cam, fake_prob) if cam is not None else None,
             })
+        aggregate = aggregate_view_probabilities(view_results)
 
         best_heatmap = None
         heatmap_view = None
@@ -315,9 +370,10 @@ class CnnRuntime:
         result = {
             "modelLoaded": True,
             "checkpoint": str(self.checkpoint_path),
-            "fakeProbability": round(float(best_prob), 6),
-            "isDeepfake": bool(best_prob >= self.threshold),
+            **aggregate,
             "threshold": self.threshold,
+            "highMaxThreshold": FACE_HIGH_MAX_THRESHOLD,
+            "fullImageThreshold": FULL_IMAGE_THRESHOLD,
             "views": view_results,
             # 확률이 가장 높은 영역 이름 (예: "full", "face_2"). heatmapBase64도 이 영역 기준이다
             "heatmapView": heatmap_view,

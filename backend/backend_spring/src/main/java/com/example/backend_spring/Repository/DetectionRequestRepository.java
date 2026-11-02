@@ -6,8 +6,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -31,6 +33,10 @@ public interface DetectionRequestRepository extends JpaRepository<DetectionReque
 
     long countByStatus(String status);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select request from DetectionRequestEntity request where request.id in :requestIds")
+    List<DetectionRequestEntity> findAllByIdInForUpdate(@Param("requestIds") Collection<Long> requestIds);
+
     Optional<DetectionRequestEntity> findFirstByDedupKeyAndStatusInOrderByCreatedAtDesc(
             String dedupKey,
             Collection<String> statuses
@@ -44,6 +50,13 @@ public interface DetectionRequestRepository extends JpaRepository<DetectionReque
     Optional<DetectionRequestEntity> findFirstByFileHashAndAnalysisModeAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
             String fileHash,
             String analysisMode,
+            Collection<String> statuses
+    );
+
+    Optional<DetectionRequestEntity> findFirstByFileHashAndAnalysisModeAndOwnerKeyHashAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
+            String fileHash,
+            String analysisMode,
+            String ownerKeyHash,
             Collection<String> statuses
     );
 
