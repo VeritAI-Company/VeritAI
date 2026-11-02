@@ -12,6 +12,8 @@ import com.example.backend_spring.Service.DetectionProcessingService;
 import com.example.backend_spring.Service.DetectionProcessingService.QueueFullException;
 import com.example.backend_spring.Service.DetectionStatus;
 import com.example.backend_spring.Service.DetectionUploadService;
+import com.example.backend_spring.Service.DetectionOwnerToken;
+import com.example.backend_spring.Service.DetectionOwnerToken.InvalidOwnerTokenException;
 import com.example.backend_spring.Service.DetectionUploadService.InvalidUploadException;
 import com.example.backend_spring.Service.UploadedDetectionFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -73,19 +75,22 @@ public class DetectionController {
             @RequestParam(value = "sourceUrl", required = false) String sourceUrl,
             @RequestParam(value = "mediaType", defaultValue = "image") String mediaType,
             @RequestParam(value = "clientType", defaultValue = "chrome-extension") String clientType,
-            @RequestParam(value = "analysisMode", defaultValue = "full_image") String analysisMode
+            @RequestParam(value = "analysisMode", defaultValue = "full_image") String analysisMode,
+            @RequestParam(value = "ownerToken", required = false) String ownerToken
     ) {
         DetectionRequestEntity requestEntity = new DetectionRequestEntity();
 
         try {
             UploadedDetectionFile uploadedFile = detectionUploadService.storeValidated(file);
             String normalizedAnalysisMode = detectionProcessingService.normalizeAnalysisMode(analysisMode);
+            String ownerKeyHash = DetectionOwnerToken.hashOptional(ownerToken);
 
-            String dedupKey = buildDedupKey(uploadedFile.fileHash(), normalizedAnalysisMode);
+            String dedupKey = buildDedupKey(uploadedFile.fileHash(), normalizedAnalysisMode, ownerKeyHash);
             Optional<ResponseEntity<?>> reusableResponse = findReusableDetection(
                     uploadedFile.fileHash(),
                     normalizedAnalysisMode,
-                    dedupKey
+                    dedupKey,
+                    ownerKeyHash
             );
                 if (reusableResponse.isPresent()) {
                     detectionUploadService.deleteQuietly(uploadedFile.path());
@@ -99,6 +104,7 @@ public class DetectionController {
                 requestEntity.setFilePath(uploadedFile.path().toString());
                 requestEntity.setFileHash(uploadedFile.fileHash());
                 requestEntity.setDedupKey(dedupKey);
+                requestEntity.setOwnerKeyHash(ownerKeyHash);
                 requestEntity.setModelVersion(appProperties.getDetection().getModelVersion());
                 requestEntity.setPipelineVersion(appProperties.getDetection().getPipelineVersion());
                 requestEntity.setMimeType(uploadedFile.mimeType());
@@ -109,7 +115,7 @@ public class DetectionController {
                 detectionRequestRepository.saveAndFlush(requestEntity);
             } catch (DataIntegrityViolationException duplicateRace) {
                 detectionUploadService.deleteQuietly(uploadedFile.path());
-                return findReusableDetection(uploadedFile.fileHash(), normalizedAnalysisMode, dedupKey)
+                return findReusableDetection(uploadedFile.fileHash(), normalizedAnalysisMode, dedupKey, ownerKeyHash)
                         .orElseThrow(() -> duplicateRace);
             }
 
@@ -125,7 +131,7 @@ public class DetectionController {
 
             return ResponseEntity.accepted().body(responseDto);
 
-        } catch (InvalidUploadException e) {
+        } catch (InvalidUploadException | InvalidOwnerTokenException e) {
             return buildErrorResponse(HttpStatus.BAD_REQUEST, null, e.getMessage(), null);
 
         } catch (QueueFullException e) {
@@ -282,18 +288,32 @@ public class DetectionController {
         );
     }
 
-    private Optional<ResponseEntity<?>> findReusableDetection(String fileHash, String analysisMode, String dedupKey) {
+    private Optional<ResponseEntity<?>> findReusableDetection(
+            String fileHash,
+            String analysisMode,
+            String dedupKey,
+            String ownerKeyHash
+    ) {
         Optional<DetectionRequestEntity> existingOpt =
                 detectionRequestRepository.findFirstByDedupKeyAndStatusInOrderByCreatedAtDesc(
                         dedupKey,
                         DetectionStatus.reusableValues()
                 );
         if (existingOpt.isEmpty()) {
-            existingOpt = detectionRequestRepository.findFirstByFileHashAndAnalysisModeAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
-                    fileHash,
-                    analysisMode,
-                    DetectionStatus.reusableValues()
-            );
+            if (ownerKeyHash == null) {
+                existingOpt = detectionRequestRepository.findFirstByFileHashAndAnalysisModeAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
+                        fileHash,
+                        analysisMode,
+                        DetectionStatus.reusableValues()
+                );
+            } else {
+                existingOpt = detectionRequestRepository.findFirstByFileHashAndAnalysisModeAndOwnerKeyHashAndDedupKeyIsNullAndStatusInOrderByCreatedAtDesc(
+                        fileHash,
+                        analysisMode,
+                        ownerKeyHash,
+                        DetectionStatus.reusableValues()
+                );
+            }
         }
         if (existingOpt.isEmpty()) {
             return Optional.empty();
@@ -328,10 +348,11 @@ public class DetectionController {
         return Optional.empty();
     }
 
-    private String buildDedupKey(String fileHash, String analysisMode) {
+    private String buildDedupKey(String fileHash, String analysisMode, String ownerKeyHash) {
         String source = fileHash + ':' + analysisMode + ':'
                 + appProperties.getDetection().getModelVersion() + ':'
-                + appProperties.getDetection().getPipelineVersion();
+                + appProperties.getDetection().getPipelineVersion() + ':'
+                + (ownerKeyHash == null ? "legacy" : ownerKeyHash);
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(digest);

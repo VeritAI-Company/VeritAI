@@ -11,4 +11,8 @@ public interface DetectionResultRepository extends JpaRepository<DetectionResult
     Optional<DetectionResultEntity> findByRequestId(Long requestId);
 
     List<DetectionResultEntity> findByRequestIdIn(Collection<Long> requestIds);
+
+    long deleteByRequestId(Long requestId);
+
+    long deleteByRequestIdIn(Collection<Long> requestIds);
 }

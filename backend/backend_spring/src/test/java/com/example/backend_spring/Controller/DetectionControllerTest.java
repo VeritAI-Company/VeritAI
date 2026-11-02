@@ -79,7 +79,8 @@ class DetectionControllerTest {
                 "https://example.com/post",
                 "image",
                 "chrome-extension",
-                "face_crop_only"
+                "face_crop_only",
+                null
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
@@ -138,7 +139,8 @@ class DetectionControllerTest {
                 "https://example.com/post",
                 "image",
                 "chrome-extension",
-                "face_crop_only"
+                "face_crop_only",
+                null
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
@@ -186,7 +188,8 @@ class DetectionControllerTest {
                 "https://example.com/post",
                 "image",
                 "chrome-extension",
-                "face_crop_only"
+                "face_crop_only",
+                null
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
@@ -228,7 +231,8 @@ class DetectionControllerTest {
                 "https://example.com/post",
                 "image",
                 "chrome-extension",
-                "face_crop_only"
+                "face_crop_only",
+                null
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);

@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
                 @Index(name = "idx_detection_request_status", columnList = "status"),
                 @Index(name = "idx_detection_request_status_created", columnList = "status, created_at"),
                 @Index(name = "idx_detection_request_status_updated", columnList = "status, updated_at"),
+                @Index(name = "idx_detection_request_owner", columnList = "owner_key_hash"),
                 @Index(name = "uk_detection_request_dedup", columnList = "dedup_key", unique = true),
                 @Index(
                         name = "idx_detection_request_reuse",
@@ -49,6 +50,10 @@ public class DetectionRequestEntity {
     @JsonIgnore
     @Column(length = 64, unique = true)
     private String dedupKey;
+
+    @JsonIgnore
+    @Column(length = 64)
+    private String ownerKeyHash;
 
     @JsonIgnore
     @Column(length = 64)
@@ -150,6 +155,14 @@ public class DetectionRequestEntity {
 
     public void setDedupKey(String dedupKey) {
         this.dedupKey = dedupKey;
+    }
+
+    public String getOwnerKeyHash() {
+        return ownerKeyHash;
+    }
+
+    public void setOwnerKeyHash(String ownerKeyHash) {
+        this.ownerKeyHash = ownerKeyHash;
     }
 
     public String getModelVersion() {
