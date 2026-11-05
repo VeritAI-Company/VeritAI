@@ -1,4 +1,3 @@
-// 자동 검사 감시, 화면 변화 감시, 사진에 검사 버튼 붙이기
 import { readDeepfakeFlag } from '../../shared/judgment.js';
 import { icon } from '../ui/styles.js';
 import { updateStatusBadge } from './badge.js';
@@ -10,6 +9,9 @@ import { settings } from './state.js';
 
 let mutationQueue = [];
 let observerDebounceTimer = null;
+let firstQueuedAt = 0;
+const MUTATION_DEBOUNCE_MS = 150;
+const MUTATION_MAX_WAIT_MS = 500; // 화면이 계속 바뀌는 페이지에서도 최소 0.5초마다 한 번은 처리한다
 
 export const DOM_OBSERVER_OPTIONS = {
     childList: true,
@@ -43,8 +45,12 @@ export const domObserver = new MutationObserver((mutations) => {
     if (mutationQueue.length > MUTATION_QUEUE_LIMIT) {
         mutationQueue = mutationQueue.slice(-MUTATION_QUEUE_LIMIT);
     }
-    if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
+    const now = Date.now();
+    if (!observerDebounceTimer) firstQueuedAt = now;
+    else clearTimeout(observerDebounceTimer);
+    const wait = Math.max(0, Math.min(MUTATION_DEBOUNCE_MS, firstQueuedAt + MUTATION_MAX_WAIT_MS - now));
     observerDebounceTimer = setTimeout(() => {
+        observerDebounceTimer = null;
         if (!settings.isSystemOn) { mutationQueue = []; return; }
         const mutationsToProcess = mutationQueue;
         mutationQueue = [];
@@ -80,10 +86,39 @@ export const domObserver = new MutationObserver((mutations) => {
                 }
             }
         });
-    }, 150);
+    }, wait);
 });
 
+// 사진마다 바로 처리하지 않고 모아서, 한 번에 12ms까지만 처리하고 브라우저에 차례를 넘긴다.
+// 사진이 수백 장인 페이지에서 한 번에 몰아 처리하면 몇 초 동안 페이지가 멈추기 때문이다.
+const attachQueue = new Map(); // 사진 -> 다시 시도한 횟수
+let attachFlushScheduled = false;
+const ATTACH_BUDGET_MS = 12;
+
 export function attachUI(media, retryCount = 0) {
+    if (!settings.isSystemOn || !media) return;
+    attachQueue.set(media, Math.max(retryCount, attachQueue.get(media) ?? 0));
+    if (!attachFlushScheduled) {
+        attachFlushScheduled = true;
+        setTimeout(flushAttachQueue, 0);
+    }
+}
+
+function flushAttachQueue() {
+    attachFlushScheduled = false;
+    const startedAt = performance.now();
+    for (const [media, retryCount] of attachQueue) {
+        attachQueue.delete(media);
+        attachUINow(media, retryCount);
+        if (attachQueue.size > 0 && performance.now() - startedAt > ATTACH_BUDGET_MS) {
+            attachFlushScheduled = true;
+            setTimeout(flushAttachQueue, 0);
+            return;
+        }
+    }
+}
+
+function attachUINow(media, retryCount = 0) {
     if (!settings.isSystemOn) return;
     if (media.tagName === 'IMG' && !media.complete) {
         media.addEventListener('load', () => attachUI(media, retryCount), { once: true });

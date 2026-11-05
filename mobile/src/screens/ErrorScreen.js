@@ -1,4 +1,3 @@
-// 오류 화면
 import { View, Text } from 'react-native';
 import { useTheme } from '../ui/ThemeContext';
 import { Button } from '../ui/common';

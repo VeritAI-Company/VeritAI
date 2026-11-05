@@ -1,4 +1,3 @@
-// 링크가 공유됐을 때 안내 화면
 import { View, Text } from 'react-native';
 import { useTheme } from '../ui/ThemeContext';
 import { Button } from '../ui/common';

@@ -1,4 +1,3 @@
-// 사진 위 배지 (분석 중, 대기 중, 오류, 조작 의심, 정상)와 배지에서 결과창 열기
 import { formatPercent } from '../../shared/judgment.js';
 import { VERITAI_CORE_CSS, icon } from '../ui/styles.js';
 import { clearMediaHighlight, ensureWrapper, getCheckButton, getMediaId, getShadowHost, positionOverlay } from './dom.js';

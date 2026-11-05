@@ -1,4 +1,3 @@
-// 결과 오답 신고
 import { sendFeedback } from '../api.js';
 import { $, state } from './state.js';
 

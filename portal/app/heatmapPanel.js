@@ -1,5 +1,4 @@
-// 히트맵 보기 전환과 영역 탭, 안내 문구
-import { getCamViews, getHeatmapViewLabel, HEATMAP_HIDE_FULL_PROB, HEATMAP_WEAK_PROB } from '../../shared/heatmap.js';
+import { getCamViews, getHeatmapNoteText, getHeatmapViewLabel, HEATMAP_HIDE_FULL_PROB } from '../../shared/heatmap.js';
 import { selectVisibleFaces } from '../../shared/judgment.js';
 import { drawCanvas } from './result.js';
 import { $, state } from './state.js';
@@ -50,8 +49,5 @@ export function renderHeatmapPanel() {
     const label = getHeatmapViewLabel(selected.name);
     const prob = selected.fakeProbability ?? 0;
     $('stage-title').textContent = `히트맵 · ${label} 기준`;
-    const lines = [`${label} 영역의 조작 확률 ${(prob * 100).toFixed(1)}% 기준입니다. 이 영역 안에서 색이 진할수록 판단에 크게 기여한 곳입니다.`];
-    if (prob < HEATMAP_HIDE_FULL_PROB) lines.push('이 영역에서는 조작 근거를 찾지 못해 표시할 색이 없습니다.');
-    else if (prob < HEATMAP_WEAK_PROB) lines.push('조작 근거가 약한 영역이라 히트맵은 참고용입니다.');
-    note.textContent = lines.join(' ');
+    note.textContent = getHeatmapNoteText(label, prob);
 }

@@ -1,4 +1,3 @@
-// 앱 화면 스타일 (색은 src/theme.js)
 import { StyleSheet } from 'react-native';
 
 export function makeStyles(colors) {
@@ -58,6 +57,7 @@ export function makeStyles(colors) {
     verdict: { paddingVertical: 18, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
     verdictTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.4 },
     verdictDesc: { marginTop: 2, fontSize: 14, color: colors.textSub },
+    verdictReason: { marginTop: 8, padding: 8, borderRadius: 8, backgroundColor: colors.bg, fontSize: 13, lineHeight: 19, color: colors.textSub },
     meterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 14, marginBottom: 6 },
     meterLabel: { fontSize: 13, color: colors.textSub },
     meterValue: { fontSize: 15, fontWeight: '700', color: colors.text },
@@ -72,7 +72,7 @@ export function makeStyles(colors) {
     faceRowLine: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     faceName: { width: 48, fontSize: 14, fontWeight: '600', color: colors.text },
     faceTrack: { flex: 1, height: 6 },
-    faceProb: { width: 44, textAlign: 'right', fontSize: 14, fontWeight: '600' },
+    faceProb: { minWidth: 44, textAlign: 'right', fontSize: 14, fontWeight: '600' },
     faceInfo: { marginTop: 4, marginLeft: 60, fontSize: 12, color: colors.textMuted },
     faceToggle: { alignSelf: 'center', paddingVertical: 8 },
     requestId: { fontSize: 11, color: colors.textMuted, textAlign: 'center' },

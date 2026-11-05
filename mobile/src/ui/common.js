@@ -1,4 +1,3 @@
-// 여러 화면에서 쓰는 머리글과 버튼
 import { View, Text, Pressable } from 'react-native';
 import { useTheme } from './ThemeContext';
 

@@ -1,9 +1,8 @@
-// 결과 화면: 판정, 확률 막대, 얼굴 목록
 import { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { useTheme } from '../ui/ThemeContext';
 import { formatTime } from '../media';
-import { selectVisibleFaces, faceColor, faceFakeProb, FACE_MODE_LABELS, FACE_QUALITY_LABELS, readDeepfakeFlag, getVerdictDescription, getFaceCountText } from '../judgment';
+import { selectVisibleFaces, faceColor, faceFakeProb, FACE_MODE_LABELS, FACE_QUALITY_LABELS, readDeepfakeFlag, getVerdictDescription, getFaceCountText, getDecisionReasonText, NO_SCORE_TEXT } from '../judgment';
 import { Button } from '../ui/common';
 
 export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, onHome }) {
@@ -15,6 +14,7 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
     const percent = (confidence * 100).toFixed(1);
     const faceCount = Number.isFinite(result.faceCount) ? result.faceCount : faces.length;
     const verdictDesc = getVerdictDescription(isFake, confidence);
+    const reasonText = getDecisionReasonText(result);
     const meta = [getFaceCountText(faceCount)];
     if (media?.mediaType === 'video_frame' && media.frameTimeMs != null) meta.push(`영상 ${formatTime(media.frameTimeMs)} 장면`);
     const [showAllFaces, setShowAllFaces] = useState(false);
@@ -23,11 +23,12 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
 
     return (
         <View style={styles.gap}>
-            <View style={styles.verdict} accessible accessibilityLabel={`${isFake ? '조작 의심' : '정상'}. ${verdictDesc} 조작 확률 ${percent}%`}>
+            <View style={styles.verdict} accessible accessibilityLabel={`${isFake ? '조작 의심' : '정상'}. ${verdictDesc} ${reasonText || ''} 조작 확률 ${percent}%`}>
                 <Text style={[styles.verdictTitle, { color: isFake ? colors.fake : colors.real }]}>
                     {isFake ? '조작 의심' : '정상'}
                 </Text>
                 <Text style={styles.verdictDesc}>{verdictDesc}</Text>
+                {!!reasonText && <Text style={styles.verdictReason}>{reasonText}</Text>}
                 <View style={styles.meterRow}>
                     <Text style={styles.meterLabel}>조작 확률</Text>
                     <Text style={styles.meterValue}>{percent}%</Text>
@@ -60,7 +61,7 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
                                         <View style={[styles.fill, { width: `${Math.round((prob ?? 0) * 100)}%`, backgroundColor: faceColor(prob, colors) }]} />
                                     </View>
                                     <Text style={[styles.faceProb, { color: faceColor(prob, colors) }]}>
-                                        {prob != null ? `${(prob * 100).toFixed(0)}%` : '-'}
+                                        {prob != null ? `${(prob * 100).toFixed(0)}%` : NO_SCORE_TEXT}
                                     </Text>
                                 </View>
                                 <Text style={styles.faceInfo}>{info}</Text>

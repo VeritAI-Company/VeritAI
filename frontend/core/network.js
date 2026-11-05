@@ -1,45 +1,71 @@
 import { API_URL, POLL_INITIAL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS, FACE_CROP_ANALYSIS_MODE } from '../config/constants.js';
-import { clampPollDelay, nextPollDelay } from '../../shared/api.js';
+import { UPLOAD_TIMEOUT_MS, clampPollDelay, nextPollDelay } from '../../shared/api.js';
+import { createOwnerToken, deleteRecordsOnServer, isValidOwnerToken, normalizeRequestIds } from '../../shared/records.js';
 
 const pendingDetectionPolls = new Map();
 let batchPollingActive = false;
 
-const STATUS_TIMEOUT_MS = 15000;
+const STATUS_TIMEOUT_MS = UPLOAD_TIMEOUT_MS;
 const OWNER_TOKEN_STORAGE_KEY = 'veritai_owner_token';
 const REQUEST_IDS_STORAGE_KEY = 'veritai_detection_request_ids';
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function getOrCreateOwnerToken() {
+// 여러 사진을 동시에 검사해도 토큰을 한 번만 만들도록, 만드는 중인 작업을 함께 기다린다
+let ownerTokenPromise = null;
+function getOrCreateOwnerToken() {
+    if (!ownerTokenPromise) {
+        ownerTokenPromise = loadOrCreateOwnerToken().catch(error => {
+            ownerTokenPromise = null;
+            throw error;
+        });
+    }
+    return ownerTokenPromise;
+}
+
+async function loadOrCreateOwnerToken() {
     const stored = await chrome.storage.local.get([OWNER_TOKEN_STORAGE_KEY]);
-    if (typeof stored[OWNER_TOKEN_STORAGE_KEY] === 'string' && stored[OWNER_TOKEN_STORAGE_KEY].length >= 32) {
+    if (isValidOwnerToken(stored[OWNER_TOKEN_STORAGE_KEY])) {
         return stored[OWNER_TOKEN_STORAGE_KEY];
     }
-    const bytes = crypto.getRandomValues(new Uint8Array(32));
-    const token = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+    const token = createOwnerToken();
     await chrome.storage.local.set({ [OWNER_TOKEN_STORAGE_KEY]: token });
     return token;
 }
 
+// 저장된 검사 번호 목록을 읽고 고치는 작업을 한 번에 하나씩 처리한다.
+// 동시에 여러 사진을 검사하면 읽기와 쓰기가 겹쳐서 번호가 빠질 수 있기 때문이다.
+let requestIdsQueue = Promise.resolve();
+function updateStoredRequestIds(update) {
+    const run = requestIdsQueue.then(async () => {
+        const stored = await chrome.storage.local.get([REQUEST_IDS_STORAGE_KEY]);
+        const ids = new Set(Array.isArray(stored[REQUEST_IDS_STORAGE_KEY]) ? stored[REQUEST_IDS_STORAGE_KEY].map(Number) : []);
+        update(ids);
+        await chrome.storage.local.set({ [REQUEST_IDS_STORAGE_KEY]: Array.from(ids) });
+    });
+    requestIdsQueue = run.catch(() => {});
+    return run;
+}
+
 async function rememberDetectionRequestId(requestId) {
     if (!Number.isSafeInteger(Number(requestId)) || Number(requestId) <= 0) return;
-    const stored = await chrome.storage.local.get([REQUEST_IDS_STORAGE_KEY]);
-    const ids = new Set(Array.isArray(stored[REQUEST_IDS_STORAGE_KEY]) ? stored[REQUEST_IDS_STORAGE_KEY] : []);
-    ids.add(Number(requestId));
-    await chrome.storage.local.set({ [REQUEST_IDS_STORAGE_KEY]: Array.from(ids) });
+    await updateStoredRequestIds(ids => ids.add(Number(requestId)));
 }
 
 export async function getStoredDetectionRequestIds() {
     const stored = await chrome.storage.local.get([REQUEST_IDS_STORAGE_KEY]);
-    return Array.from(new Set(
-        (Array.isArray(stored[REQUEST_IDS_STORAGE_KEY]) ? stored[REQUEST_IDS_STORAGE_KEY] : [])
-            .map(Number)
-            .filter(id => Number.isSafeInteger(id) && id > 0)
-    ));
+    return normalizeRequestIds(stored[REQUEST_IDS_STORAGE_KEY]);
 }
 
-export async function clearStoredDetectionRequestIds() {
-    await chrome.storage.local.remove(REQUEST_IDS_STORAGE_KEY);
+// handledIds: 이번에 정리한 번호 (삭제했거나 서버에 이미 없거나 내 기록이 아닌 것).
+// 그 번호만 지우고, 처리 중이라 못 지운 번호와 그사이 새로 생긴 번호는 남긴다. 값이 없으면 전부 지운다.
+export async function clearStoredDetectionRequestIds(handledIds) {
+    if (!Array.isArray(handledIds)) {
+        await chrome.storage.local.remove(REQUEST_IDS_STORAGE_KEY);
+        return;
+    }
+    const handled = new Set(handledIds.map(Number));
+    await updateStoredRequestIds(ids => handled.forEach(id => ids.delete(id)));
 }
 
 export async function sendToBackend(blob, mediaType, analysisMode = FACE_CROP_ANALYSIS_MODE) {
@@ -53,7 +79,7 @@ export async function sendToBackend(blob, mediaType, analysisMode = FACE_CROP_AN
     formData.append("ownerToken", await getOrCreateOwnerToken());
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
 
     try {
         const response = await fetch(API_URL, { method: "POST", body: formData, signal: controller.signal });
@@ -83,30 +109,11 @@ export async function sendToBackend(blob, mediaType, analysisMode = FACE_CROP_AN
     }
 }
 
+// 서버의 내 검사 기록을 지운다. 실제 삭제 순서(100개씩 나누기, 거절되면 한 개씩 다시 지우기)는 shared/records.js 에 있다
 export async function deleteDetectionRecords(requestIds) {
-    const ids = Array.from(new Set((requestIds || []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0)));
-    if (ids.length === 0) return { requestedCount: 0, deletedRequestCount: 0 };
-    const ownerToken = await getOrCreateOwnerToken();
-    const response = await fetch(API_URL, {
-        method: 'DELETE',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-VeritAI-Owner-Token': ownerToken,
-        },
-        body: JSON.stringify({ requestIds: ids }),
-    });
-    let body = null;
-    try {
-        body = await response.json();
-    } catch (_) {
-        body = null;
-    }
-    if (!response.ok) {
-        const error = new Error(body?.message || '검사 기록을 삭제하지 못했습니다.');
-        error.status = response.status;
-        throw error;
-    }
-    return body;
+    const ids = normalizeRequestIds(requestIds);
+    const ownerToken = ids.length > 0 ? await getOrCreateOwnerToken() : ''; // 지울 게 없으면 토큰을 만들지 않는다
+    return deleteRecordsOnServer({ detectionsUrl: API_URL, ownerToken, requestIds: ids });
 }
 
 async function pollDetectionResult(requestId) {

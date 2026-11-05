@@ -19,7 +19,7 @@ compiled._compile(build.outputFiles[0].text, entryPoint);
 
 const { cacheDeletionErrorMessage, clearDetectionCacheFlow } = compiled.exports;
 
-test('backend success clears persistent IDs, memory, UI, and statistics in order', async () => {
+test('backend success clears persistent IDs, memory, and UI in order, keeping statistics', async () => {
     const calls = [];
     const deletion = await clearDetectionCacheFlow({
         getStoredRequestIds: async () => {
@@ -33,7 +33,6 @@ test('backend success clears persistent IDs, memory, UI, and statistics in order
         clearStoredRequestIds: async () => calls.push('clear-ids'),
         clearMemoryCache: () => calls.push('clear-memory'),
         clearUi: () => calls.push('clear-ui'),
-        resetStatistics: async () => calls.push('reset-statistics'),
         reattachUi: () => calls.push('reattach-ui'),
     });
 
@@ -44,7 +43,6 @@ test('backend success clears persistent IDs, memory, UI, and statistics in order
         'clear-ids',
         'clear-memory',
         'clear-ui',
-        'reset-statistics',
         'reattach-ui',
     ]);
 });
@@ -66,8 +64,7 @@ test('backend failure preserves every local cache and UI state', async () => {
             clearStoredRequestIds: async () => calls.push('clear-ids'),
             clearMemoryCache: () => calls.push('clear-memory'),
             clearUi: () => calls.push('clear-ui'),
-            resetStatistics: async () => calls.push('reset-statistics'),
-            reattachUi: () => calls.push('reattach-ui'),
+                reattachUi: () => calls.push('reattach-ui'),
         }),
         conflict,
     );

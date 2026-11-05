@@ -1,5 +1,3 @@
-// 날짜와 검사 경로 표시
-
 export function sourceLabel(source) {
     return { share: '공유', gallery: '갤러리', camera: '카메라' }[source] || '';
 }

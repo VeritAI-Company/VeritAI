@@ -1,4 +1,3 @@
-// 분석 중 화면
 import { View, ActivityIndicator, Text } from 'react-native';
 import { useTheme } from '../ui/ThemeContext';
 

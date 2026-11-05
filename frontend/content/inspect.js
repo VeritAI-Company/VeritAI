@@ -1,5 +1,4 @@
-// 검사 시작, 영상 다시 검사, 오늘 통계
-import { readDeepfakeFlag } from '../../shared/judgment.js';
+import { AI_UNAVAILABLE_CODE, AI_UNAVAILABLE_MESSAGE, aiUnavailableDetail, isAiUnavailable, readDeepfakeFlag } from '../../shared/judgment.js';
 import { GLOBAL_AD_SELECTOR } from '../config/constants';
 import { captureImageBlob, captureVideoBlob } from '../core/capture.js';
 import { sendToBackend } from '../core/network.js';
@@ -85,6 +84,15 @@ export async function startInspection(media) {
 
         if (!media.dataset.veritaiScanned) return;
 
+        rememberAiStatus(!isAiUnavailable(response.result));
+        // AI 모델이 돌지 않은 결과는 '정상'으로 보여 주지 않고, 캐시와 통계에도 넣지 않는다 (오류로 처리해 다시 시도할 수 있게)
+        if (isAiUnavailable(response.result)) {
+            console.warn('[VeritAI] AI 모델이 동작하지 않아 판정하지 못했습니다:', aiUnavailableDetail(response.result));
+            const aiError = new Error(AI_UNAVAILABLE_MESSAGE);
+            aiError.code = AI_UNAVAILABLE_CODE;
+            throw aiError;
+        }
+
         delete media.dataset.veritaiUserRequest;
         const data = { ...response, frameUrl: URL.createObjectURL(blob), frameTime };
 
@@ -125,7 +133,8 @@ export async function startInspection(media) {
         }
 
         let friendlyMessage = "검사하지 못했습니다.";
-        if (isBlocked) friendlyMessage = media.tagName === "VIDEO" ? "이 사이트 영상은 검사할 수 없습니다." : "이 사이트 사진은 검사할 수 없습니다.";
+        if (err?.code === AI_UNAVAILABLE_CODE) friendlyMessage = "AI 판정 실패";
+        else if (isBlocked) friendlyMessage = media.tagName === "VIDEO" ? "이 사이트 영상은 검사할 수 없습니다." : "이 사이트 사진은 검사할 수 없습니다.";
         else if (err.status === 429) friendlyMessage = "요청이 많습니다.";
         else if (err.status === 408) friendlyMessage = "응답이 늦습니다.";
         else if (err.status >= 500) friendlyMessage = "서버 오류가 났습니다.";
@@ -141,6 +150,14 @@ export async function startInspection(media) {
             delete media.dataset.veritaiScanKey;
         }
     });
+}
+
+// 팝업의 서버 상태 표시가 읽는 값. 상태가 바뀔 때만 저장한다 (저장할 때마다 모든 탭에 변경 알림이 가기 때문)
+let lastAiOk = null;
+function rememberAiStatus(ok) {
+    if (lastAiOk === ok) return;
+    lastAiOk = ok;
+    chrome.storage.local.set({ veritai_ai_status: { ok, at: Date.now() } });
 }
 
 function recordInspectionStat(isFake) {

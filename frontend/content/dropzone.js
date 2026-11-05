@@ -1,4 +1,3 @@
-// 사진 끌어다 검사, 단독 결과 창
 import { icon } from '../ui/styles.js';
 import { startInspection } from './inspect.js';
 

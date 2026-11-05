@@ -1,5 +1,3 @@
-// 화면 요소 찾기와 PWA 공용 상태
-
 export const $ = (id) => document.getElementById(id);
 
 export const state = {

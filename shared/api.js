@@ -8,10 +8,22 @@ export const POLL_INITIAL_INTERVAL_MS = 300;  // 결과를 처음 물어보는 �
 export const POLL_MAX_INTERVAL_MS = 2000;     // 결과를 물어보는 가장 긴 간격
 export const POLL_TIMEOUT_MS = 180000;        // 결과를 기다리는 최대 시간 (3분)
 
-// 서버 기본 주소로 API 주소 만들기
 export function apiUrls(base) {
     const root = String(base).replace(/\/$/, '');
-    return { detections: `${root}/api/detections`, feedback: `${root}/api/feedback` };
+    return { detections: `${root}/api/detections`, feedback: `${root}/api/feedback`, queue: `${root}/api/detections/queue` };
+}
+
+export const SERVER_CHECK_TIMEOUT_MS = 4000;
+export const AI_STATUS_FRESH_MS = 30 * 60 * 1000; // 30분이 지난 AI 실패 기록은 지금 상태로 보지 않는다
+
+// 서버 대기열 정보(/api/detections/queue)와 최근 AI 판정 실패 여부로 상태 문구를 정한다. metrics가 null이면 연결 실패
+// 확장 팝업(frontend/popup.js)에도 같은 문구가 있다 (팝업은 빌드 구조상 이 파일을 가져오지 않는다)
+export function describeServerStatus(metrics, recentAiFailure = false) {
+    if (!metrics) return { level: 'error', text: '분석 서버에 연결할 수 없습니다' };
+    if (metrics.running === false) return { level: 'warn', text: '분석 서버가 검사를 멈췄습니다' };
+    if (recentAiFailure) return { level: 'warn', text: '서버 연결됨 · 최근 AI 판정 실패' };
+    const queued = Number(metrics.queuedCount) || 0;
+    return { level: 'ok', text: queued > 0 ? `분석 서버 연결됨 · 대기 ${queued}건` : '분석 서버 연결됨' };
 }
 
 // 서버가 알려 준 대기 시간을 허용 범위 안으로 맞춘다. 값이 없거나 잘못되면 null

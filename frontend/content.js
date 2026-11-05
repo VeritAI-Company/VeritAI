@@ -1,5 +1,3 @@
-// VeritAI 크롬 확장 content script 시작점
-// 실제 기능은 content/ 폴더의 각 파일에 있고, 여기서는 초기화와 페이지 이벤트, 확장 메시지만 연결한다
 import { releaseFrameUrl, scanCache, scannedMediaKeys } from './content/cache.js';
 import { getAllBadges, isVisibleMedia } from './content/dom.js';
 import { analyzeStandaloneMedia, injectDropzone } from './content/dropzone.js';
@@ -28,8 +26,31 @@ chrome.storage.local.get(SETTING_KEYS, (result) => {
     }, 500);
 });
 
+// 캐시 비우기를 한 탭이 이 값을 바꾸면, 나머지 탭도 화면 표시와 메모리 캐시를 지운다 (서버 기록은 이미 지워졌으므로 다시 지우지 않는다)
+const CACHE_CLEARED_KEY = 'veritai_cache_cleared_at';
+let ownCacheClearStamp = null;
+
+function clearLocalScanState() {
+    scanCache.forEach(releaseFrameUrl);
+    scanCache.clear();
+    scannedMediaKeys.clear();
+}
+
+function reattachAllUI() {
+    if (!settings.isSystemOn) return;
+    injectDropzone();
+    document.querySelectorAll('img, video').forEach(media => attachUI(media));
+}
+
 chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'local') applySettingChanges(changes);
+    if (namespace !== 'local') return;
+    applySettingChanges(changes);
+    const cleared = changes[CACHE_CLEARED_KEY];
+    if (cleared && cleared.newValue && cleared.newValue !== ownCacheClearStamp) {
+        clearLocalScanState();
+        clearAllUI();
+        reattachAllUI();
+    }
 });
 
 document.addEventListener('visibilitychange', () => {
@@ -91,29 +112,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // 서버의 내 검사 기록을 먼저 지우고, 성공했을 때만 이 탭의 캐시와 화면을 초기화한다
         (async () => {
             try {
-                const today = new Date().toLocaleDateString();
                 const deletion = await clearDetectionCacheFlow({
                     getStoredRequestIds: getStoredDetectionRequestIds,
                     deleteRecords: deleteDetectionRecords,
                     clearStoredRequestIds: clearStoredDetectionRequestIds,
-                    clearMemoryCache: () => {
-                        scanCache.forEach(releaseFrameUrl);
-                        scanCache.clear();
-                        scannedMediaKeys.clear();
-                    },
+                    clearMemoryCache: clearLocalScanState,
                     clearUi: clearAllUI,
-                    resetStatistics: () => chrome.storage.local.set({
-                        veritai_stat_date: today,
-                        veritai_stat_scanned: 0,
-                        veritai_stat_blocked: 0,
-                    }),
-                    reattachUi: () => {
-                        if (settings.isSystemOn) {
-                            injectDropzone();
-                            document.querySelectorAll('img, video').forEach(media => attachUI(media));
-                        }
-                    },
+                    reattachUi: reattachAllUI,
                 });
+                // 다른 탭에 알린다 (내 탭은 이미 지웠으므로 내가 쓴 값은 무시한다)
+                ownCacheClearStamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                chrome.storage.local.set({ [CACHE_CLEARED_KEY]: ownCacheClearStamp });
                 sendResponse({ success: true, deletion });
             } catch (error) {
                 sendResponse({

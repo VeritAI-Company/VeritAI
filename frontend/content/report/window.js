@@ -1,5 +1,3 @@
-// 결과창 창 동작: 끌어서 옮기기, 배지 옆 위치 맞추기, 화면 밖으로 나가지 않게 하기, 스크롤과 바깥 클릭 시 닫기, 닫기 버튼
-
 export function setupReportWindow(detailsBox, badge, e) {
     const dragHandle = detailsBox.querySelector('.veritai-drag-handle');
     let isDragging = false;

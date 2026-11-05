@@ -1,4 +1,3 @@
-// 동시 검사 수 제한과 검사 순서
 import { MAX_CONCURRENT_INSPECTIONS } from '../config/constants';
 import { shouldInspectMedia } from './dom.js';
 import { settings } from './state.js';

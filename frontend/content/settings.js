@@ -1,4 +1,3 @@
-// 설정 반영, 화면 정리, 확장 연결 끊김 처리
 import { readDeepfakeFlag } from '../../shared/judgment.js';
 import { clearPendingPolls } from '../core/network.js';
 import { updateStatusBadge } from './badge.js';
@@ -30,7 +29,6 @@ export function clearAllUI() {
     restorePagePositions();
 }
 
-// 설정(전원, 자동 검사, 정상 숨기기) 변경을 화면에 반영한다
 export function applySettingChanges(changes) {
     if (!SETTING_KEYS.some(key => key in changes)) return;
 

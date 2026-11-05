@@ -81,7 +81,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
         id: "veritai_inspect",
-        title: "🔍 VeritAI로 조작 정밀 검사",
+        title: "VeritAI로 조작 정밀 검사",
         contexts: ["image", "video"]
     });
 });

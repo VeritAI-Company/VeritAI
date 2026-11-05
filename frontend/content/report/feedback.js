@@ -1,4 +1,3 @@
-// 결과창 오답 신고 (이유 입력 후 서버로 전송)
 import { FEEDBACK_URL } from '../../config/constants';
 
 export function setupReportFeedback(detailsBox, data) {

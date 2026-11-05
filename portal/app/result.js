@@ -1,6 +1,5 @@
-// 결과 화면: 판정, 확률 막대, 얼굴 위치와 히트맵 그리기, 얼굴 목록
 import { drawCamGrid, drawViewOutline, getCamViews, pickDefaultCamView, pickHeatmapFace } from '../../shared/heatmap.js';
-import { faceModeLabel, faceQualityLabel, formatPercent, getFaceColor, getFaceCountText, getFaceFakeProb, getProbLevel, getVerdictDescription, NO_FACE_TEXT, readDeepfakeFlag, selectVisibleFaces } from '../../shared/judgment.js';
+import { faceModeLabel, faceQualityLabel, formatPercent, getDecisionReasonText, getFaceColor, getFaceCountText, getFaceFakeProb, getProbLevel, getVerdictDescription, NO_FACE_TEXT, NO_SCORE_TEXT, readDeepfakeFlag, selectVisibleFaces } from '../../shared/judgment.js';
 import { resetFeedback } from './feedback.js';
 import { renderHeatmapPanel } from './heatmapPanel.js';
 import { $, state } from './state.js';
@@ -21,6 +20,9 @@ export async function renderResult(data) {
     const confidence = Number(result.confidence) || 0;
     const level = getProbLevel(confidence);
     $('verdict-desc').textContent = getVerdictDescription(isFake, confidence);
+    const reasonText = getDecisionReasonText(result);
+    $('verdict-reason').textContent = reasonText || '';
+    $('verdict-reason').hidden = !reasonText;
     $('verdict-percent').textContent = `${fakePercent}%`;
     $('verdict-fill').className = `fill ${level}`;
     $('verdict-fill').style.width = `${Math.round(confidence * 100)}%`;
@@ -101,12 +103,13 @@ export function drawCanvas() {
     selectVisibleFaces(faces, state.showAllFaces).visible.forEach(({ face, index: i }) => {
         const box = face.bbox;
         if (!box || !(box.w > 0)) return;
-        const color = getFaceColor(getFaceFakeProb(face));
+        const faceProb = getFaceFakeProb(face);
+        const color = getFaceColor(faceProb);
         ctx.lineWidth = lineWidth;
         ctx.strokeStyle = color;
         ctx.strokeRect(box.x, box.y, box.w, box.h);
 
-        const label = String(i + 1);
+        const label = faceProb == null ? `${i + 1} ${NO_SCORE_TEXT}` : String(i + 1);
         const fontSize = Math.round(Math.min(maxFont, Math.max(minFont, Math.min(box.w, box.h) * 0.35)));
         ctx.font = `bold ${fontSize}px sans-serif`;
         const padX = Math.round(fontSize * 0.3);
@@ -160,7 +163,7 @@ function renderFaceList(faces) {
         track.append(fill);
         const prob = document.createElement('span');
         prob.className = 'face-prob';
-        prob.textContent = probValue != null ? formatPercent(probValue, 0) : '-';
+        prob.textContent = probValue != null ? formatPercent(probValue, 0) : NO_SCORE_TEXT;
         prob.style.color = getFaceColor(probValue);
         row.append(name, track, prob);
 

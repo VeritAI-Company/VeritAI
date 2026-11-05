@@ -1,17 +1,16 @@
-// VeritAI 앱 시작점: 화면 상태(홈, 미리보기, 분석 중, 결과, 리포트, 오류, 링크)를 관리하고 화면을 고른다
-// 각 화면은 src/screens/, 공통 버튼과 스타일은 src/ui/ 에 있다
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
-import { BackHandler, ScrollView } from 'react-native';
+import { Alert, BackHandler, ScrollView } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { colors as themeColors } from './src/theme';
 import { makeStyles } from './src/ui/styles';
 import { ThemeContext, useTheme } from './src/ui/ThemeContext';
 import { loadHistory, addHistory, toHistoryEntry, clearHistory } from './src/history';
+import { clearMyRecords, getStoredRequestIds } from './src/records';
 import { prepareMedia, toFileUri, isVideoMime, clampFrameTime, prepareVideoFrame, formatTime } from './src/media';
-import { requestDetection, toFriendlyMessage, toErrorDetail, fetchDetection } from './src/api';
+import { requestDetection, toFriendlyMessage, toErrorDetail, fetchDetection, ensureAiResult } from './src/api';
 import { ReportScreen } from './src/screens/ReportScreen';
 import { Header } from './src/ui/common';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -45,13 +44,21 @@ function Main() {
     const [error, setError] = useState({ message: '', canRetry: false, detail: '' });
     const [sharedText, setSharedText] = useState('');
     const [history, setHistory] = useState([]);
+    const [serverRecordCount, setServerRecordCount] = useState(0); // 서버에서 아직 안 지운 내 검사 기록 수 (처리 중이라 남은 것 포함)
     const busyRef = useRef(false);
     const [frameBusy, setFrameBusy] = useState(false);
     const [frameError, setFrameError] = useState('');
 
     const { hasShareIntent, shareIntent, resetShareIntent, error: shareError } = useShareIntentContext();
 
-    useEffect(() => { loadHistory().then(setHistory); }, []);
+    const refreshServerRecordCount = useCallback(async () => {
+        setServerRecordCount((await getStoredRequestIds()).length);
+    }, []);
+
+    useEffect(() => {
+        loadHistory().then(setHistory);
+        refreshServerRecordCount();
+    }, [refreshServerRecordCount]);
 
     const goHome = useCallback(() => {
         setScreen('home');
@@ -165,7 +172,34 @@ function Main() {
             showError(toFriendlyMessage(err), true, toErrorDetail(err));
         } finally {
             busyRef.current = false;
+            refreshServerRecordCount(); // 실패해도 서버에 기록이 생겼을 수 있다
         }
+    };
+
+    const clearAllHistory = () => {
+        Alert.alert('검사 기록 전체 삭제', '이 폰의 검사 기록과 서버에 남은 검사 기록을 함께 지웁니다.', [
+            { text: '취소', style: 'cancel' },
+            {
+                text: '삭제',
+                style: 'destructive',
+                onPress: async () => {
+                    try {
+                        const summary = await clearMyRecords();
+                        setHistory(await clearHistory());
+                        const pending = summary.pendingIds?.length || 0;
+                        if (pending > 0) {
+                            Alert.alert('일부 기록이 남았습니다', `처리 중인 검사 ${pending}건은 끝난 뒤 "남은 기록 지우기"를 다시 눌러 주세요.`);
+                        }
+                    } catch (err) {
+                        Alert.alert('삭제하지 못했습니다', err?.status === 0
+                            ? '서버에 연결할 수 없습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.'
+                            : '검사 기록을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+                    } finally {
+                        refreshServerRecordCount();
+                    }
+                },
+            },
+        ]);
     };
 
     const openHistory = async (item) => {
@@ -175,7 +209,7 @@ function Main() {
         try {
             const response = await fetchDetection(item.requestId);
             if (response.status !== 'DONE' || !response.result) throw new Error('아직 분석이 끝나지 않은 기록입니다.');
-            setData(response);
+            setData(ensureAiResult(response));
             setScreen('result');
         } catch (err) {
             showError(err.status !== undefined ? toFriendlyMessage(err) : err.message, false, toErrorDetail(err));
@@ -195,7 +229,8 @@ function Main() {
                             onGallery={pickFromGallery}
                             history={history}
                             onOpenHistory={openHistory}
-                            onClearHistory={async () => setHistory(await clearHistory())}
+                            onClearHistory={clearAllHistory}
+                            serverRecordCount={serverRecordCount}
                         />
                     )}
                     {screen === 'preview' && media && (

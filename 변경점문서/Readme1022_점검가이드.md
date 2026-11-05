@@ -11,7 +11,15 @@
 - [ ] `chrome://extensions`에서 확장 새로고침, 열어 둔 웹페이지도 새로고침
 
 ## 2. 서버
-- [ ] AI 서버: `powershell -ExecutionPolicy Bypass -File scripts\run_ai_server_retention_v2.ps1` (이미 켜져 있으면 `netstat -ano | findstr :8000`으로 확인)
+- [ ] AI 서버: cd ai
+python -m venv venv
+.\venv\Scripts\activate
+$env:VERITAI_RETENTION_FEATURE_GUARD='retention_precision_combo_v2'
+$env:VERITAI_CANDIDATE_BBOX_RETENTION = "precision_guarded"
+pip install "opencv-python<5"
+python -m pip install fastapi uvicorn python-multipart
+pip install torch torchvision
+python main.py
 - [ ] 백엔드: `cd backend\backend_spring` 후 `.\gradlew.bat bootRun`
 - [ ] 포털: `npm run dev:portal`, PC에서 `http://127.0.0.1:5173` 열리는지 확인
 
@@ -38,6 +46,7 @@
   $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
   & $adb devices
   & $adb reverse tcp:8080 tcp:8080
+  & $adb reverse tcp:8081 tcp:8081
   & $adb reverse tcp:5173 tcp:5173
   ```
 - [ ] 폰 크롬 `http://localhost:5173`에서 사진 선택, 미리보기, 검사, 결과

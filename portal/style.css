@@ -76,7 +76,25 @@ main { max-width: 480px; margin: 0 auto; }
 .start-card { display: flex; flex-direction: column; gap: 10px; padding: 20px 16px; }
 .start-title { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
 .start-text { margin: 0 0 6px; font-size: 13px; color: var(--text-sub); }
+.server-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; color: var(--text-sub); }
+.server-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+.server-status.is-ok .server-dot { background: var(--real); }
+.server-status.is-warn .server-dot { background: var(--warn); }
+.server-status.is-error .server-dot { background: var(--fake); }
+.server-status.is-warn #server-text { color: var(--warn); }
+.server-status.is-error #server-text { color: var(--fake); }
+#server-text { flex: 1 1 160px; min-width: 0; }
+.server-meta { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.server-host { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.server-retry { min-height: 32px; padding: 4px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text-sub); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; white-space: nowrap; }
+.server-retry:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .privacy-note { margin: 0; padding: 0 4px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.records-box { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.records-box .btn-small { font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.records-box .btn-small.is-confirm { color: var(--fake); font-weight: 600; text-decoration: none; }
+.records-status { margin: 0; font-size: 13px; text-align: center; line-height: 1.5; }
+.records-status.is-ok { color: var(--real); }
+.records-status.is-error { color: var(--fake); }
 
 .preview-image { display: block; width: 100%; max-height: 60vh; object-fit: contain; border-radius: 8px; background: var(--raised); }
 
@@ -92,6 +110,8 @@ main { max-width: 480px; margin: 0 auto; }
 
 .verdict { padding: 18px 16px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); }
 .verdict-desc { margin-top: 2px; font-size: 14px; color: var(--text-sub); }
+.verdict-reason { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--raised); font-size: 13px; line-height: 1.55; color: var(--text-sub); }
+.verdict-reason[hidden] { display: none; }
 .meter { margin-top: 14px; }
 .meter-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--text-sub); margin-bottom: 6px; font-variant-numeric: tabular-nums; }
 .meter-row b { color: var(--text); font-size: 15px; }
@@ -139,7 +159,7 @@ main { max-width: 480px; margin: 0 auto; }
 .face-row { display: flex; align-items: center; gap: 12px; font-variant-numeric: tabular-nums; }
 .face-row .track { flex: 1; height: 6px; }
 .face-name { width: 48px; flex-shrink: 0; font-weight: 600; font-size: 14px; }
-.face-prob { width: 44px; text-align: right; font-weight: 600; font-size: 14px; }
+.face-prob { min-width: 44px; white-space: nowrap; text-align: right; font-weight: 600; font-size: 14px; }
 .face-info { margin: 4px 0 0 60px; font-size: 12px; color: var(--muted); }
 .face-toggle { align-self: center; background: none; border: none; color: var(--text-sub); font-size: 13px; font-family: inherit; text-decoration: underline; text-underline-offset: 3px; padding: 6px 4px; cursor: pointer; }
 .face-empty { margin: 0; padding: 12px 0; font-size: 13px; color: var(--text-sub); }

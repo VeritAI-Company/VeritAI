@@ -1,4 +1,3 @@
-// 사진 고르기, 검사 요청, 처음으로 돌아가기
 import { requestDetection, toFriendlyMessage } from '../api.js';
 import { prepareImage } from '../image.js';
 import { drawCanvas, renderResult } from './result.js';

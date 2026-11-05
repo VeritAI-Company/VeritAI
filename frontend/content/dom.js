@@ -1,11 +1,24 @@
-// 사진 번호, 배지와 버튼 찾기, 위치 맞추기, 페이지 요소 위치 되돌리기
 import { GLOBAL_AD_SELECTOR } from '../config/constants';
 
 let veritaiIdCounter = 0;
+// 번호로 사진을 바로 찾기 위한 목록. 페이지 전체를 다시 뒤지지 않게 한다 (사진이 지워지면 WeakRef라 메모리에 남지 않는다)
+const mediaById = new Map();
 
 export function getMediaId(media) {
     if (!media.dataset.veritaiId) media.dataset.veritaiId = `v${++veritaiIdCounter}`;
-    return media.dataset.veritaiId;
+    const id = media.dataset.veritaiId;
+    if (mediaById.get(id)?.deref() !== media) mediaById.set(id, new WeakRef(media));
+    return id;
+}
+
+export function findMediaById(id) {
+    if (!id) return null;
+    const media = mediaById.get(id)?.deref();
+    if (media && media.isConnected && media.dataset.veritaiId === id) return media;
+    mediaById.delete(id);
+    const found = document.querySelector(`img[data-veritai-id="${id}"], video[data-veritai-id="${id}"]`);
+    if (found) mediaById.set(id, new WeakRef(found));
+    return found;
 }
 
 function findOwnedElement(media, selector) {

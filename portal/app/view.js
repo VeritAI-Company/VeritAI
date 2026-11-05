@@ -1,4 +1,5 @@
-// 화면 전환, 불러오는 중, 오류 화면, 아이콘, 이미지 불러오기
+import { refreshRecordsBox } from './records.js';
+import { refreshServerStatus } from './serverStatus.js';
 import { $ } from './state.js';
 
 const VIEWS = ['start', 'preview', 'loading', 'result', 'error'];
@@ -14,6 +15,10 @@ export function iconSvg(name) {
 
 export function showView(name) {
     VIEWS.forEach(view => { $(`view-${view}`).hidden = view !== name; });
+    if (name === 'start') {
+        refreshRecordsBox();
+        refreshServerStatus();
+    }
     window.scrollTo(0, 0);
 }
 

@@ -1,4 +1,6 @@
 import { API_BASE, CLIENT_TYPE } from './config';
+import { AI_UNAVAILABLE_CODE, AI_UNAVAILABLE_MESSAGE, aiUnavailableDetail, isAiUnavailable } from './judgment';
+import { getOwnerToken, rememberRequestId } from './records';
 
 // 요청 간격과 시간 제한은 웹의 shared/api.js와 같은 값이다 (앱은 빌드 구조상 그 파일을 가져올 수 없다)
 
@@ -48,6 +50,7 @@ export async function requestDetection(media, onStatus = () => {}) {
     formData.append('mediaType', media.mediaType || 'image');
     formData.append('clientType', CLIENT_TYPE);
     formData.append('analysisMode', 'face_crop_only');
+    formData.append('ownerToken', await getOwnerToken()); // 나중에 내 기록을 지울 수 있도록 함께 보낸다
 
     const response = await fetchWithTimeout(DETECTIONS_URL, { method: 'POST', body: formData });
     const data = await readJson(response);
@@ -58,12 +61,13 @@ export async function requestDetection(media, onStatus = () => {}) {
         throw apiErr;
     }
     if (!data) throw new ApiError('서버 응답을 읽을 수 없습니다.', response.status);
+    if (data.requestId != null) await rememberRequestId(data.requestId);
 
-    if (data.status === 'DONE' && data.result) return data;
+    if (data.status === 'DONE' && data.result) return ensureAiResult(data);
     if (data.status === 'FAILED') throw new ApiError(data.message || '분석에 실패했습니다.', 500);
     if ((data.status === 'QUEUED' || data.status === 'PROCESSING') && data.requestId != null) {
         onStatus(data.status);
-        return pollDetection(data.requestId, data.retryAfterMs, onStatus);
+        return ensureAiResult(await pollDetection(data.requestId, data.retryAfterMs, onStatus));
     }
     throw new ApiError(data.message || '분석이 정상적으로 완료되지 않았습니다.', 500);
 }
@@ -94,6 +98,15 @@ export async function fetchDetection(requestId) {
     return data;
 }
 
+// AI 모델이 돌지 않은 결과는 서버가 '확률 0%, 정상'으로 채워 보내므로 결과로 쓰지 않고 오류로 바꾼다
+export function ensureAiResult(data) {
+    if (!isAiUnavailable(data?.result)) return data;
+    const apiErr = new ApiError(AI_UNAVAILABLE_MESSAGE, 503);
+    apiErr.code = AI_UNAVAILABLE_CODE;
+    apiErr.detail = `AI 서버의 모델이 준비되지 않았습니다 · ${aiUnavailableDetail(data.result)}`;
+    throw apiErr;
+}
+
 function clampDelay(ms) {
     const value = Number(ms);
     if (!Number.isFinite(value) || value <= 0) return null;
@@ -110,6 +123,7 @@ export function toErrorDetail(err) {
 }
 
 export function toFriendlyMessage(err) {
+    if (err?.code === AI_UNAVAILABLE_CODE) return AI_UNAVAILABLE_MESSAGE;
     const status = err?.status ?? 0;
     if (status === 0) {
         // 개발용 안내(adb reverse)는 개발 빌드에서만 보여 준다

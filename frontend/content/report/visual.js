@@ -1,6 +1,5 @@
-// 결과창 사진 영역: 얼굴 위치 그리기, 히트맵 패널(탭, 진하기, 원본 보기), 얼굴 목록 펼치기
-import { HEATMAP_HIDE_FULL_PROB, HEATMAP_WEAK_PROB, drawCamGrid, drawViewOutline, getHeatmapViewLabel, pickDefaultCamView, pickHeatmapFace } from '../../../shared/heatmap.js';
-import { getFaceColor, getFaceFakeProb, selectVisibleFaces } from '../../../shared/judgment.js';
+import { HEATMAP_HIDE_FULL_PROB, drawCamGrid, drawViewOutline, getHeatmapNoteText, getHeatmapViewLabel, pickDefaultCamView, pickHeatmapFace } from '../../../shared/heatmap.js';
+import { NO_SCORE_TEXT, getFaceColor, getFaceFakeProb, selectVisibleFaces } from '../../../shared/judgment.js';
 import { escapeHTML } from '../format.js';
 
 export function setupReportVisual({ detailsBox, result, faces, camViews, hasHeatmap, reportImageSrc, faceList }) {
@@ -35,12 +34,13 @@ export function setupReportVisual({ detailsBox, result, faces, camViews, hasHeat
                 const minFont = 9 / displayScale;
                 selectVisibleFaces(faces, faceList.showAll).visible.forEach(({ face: f, index: i }) => {
                     if (f.bbox && f.bbox.w > 0) {
-                        const color = getFaceColor(getFaceFakeProb(f));
+                        const faceProb = getFaceFakeProb(f);
+                        const color = getFaceColor(faceProb);
                         bCtx.lineWidth = lineWidth;
                         bCtx.strokeStyle = color;
                         bCtx.strokeRect(f.bbox.x, f.bbox.y, f.bbox.w, f.bbox.h);
 
-                        const label = String(i + 1);
+                        const label = faceProb == null ? `${i + 1} ${NO_SCORE_TEXT}` : String(i + 1);
                         const fontSize = Math.round(Math.min(maxFont, Math.max(minFont, Math.min(f.bbox.w, f.bbox.h) * 0.35)));
                         bCtx.font = `bold ${fontSize}px sans-serif`;
                         const padX = Math.round(fontSize * 0.3);
@@ -131,10 +131,7 @@ export function setupReportVisual({ detailsBox, result, faces, camViews, hasHeat
             const label = getHeatmapViewLabel(selectedCamView.name);
             if (visualTitleEl && isHeatmapMode) visualTitleEl.innerText = `히트맵 · ${label} 기준`;
             if (heatmapNoteEl) {
-                const lines = [`${label} 영역의 조작 확률 ${(prob * 100).toFixed(1)}% 기준입니다. 이 영역 안에서 색이 진할수록 판단에 크게 기여한 곳입니다.`];
-                if (prob < HEATMAP_HIDE_FULL_PROB) lines.push('이 영역에서는 조작 근거를 찾지 못해 표시할 색이 없습니다.');
-                else if (prob < HEATMAP_WEAK_PROB) lines.push('조작 근거가 약한 영역이라 히트맵은 참고용입니다.');
-                heatmapNoteEl.textContent = lines.join(' ');
+                heatmapNoteEl.textContent = getHeatmapNoteText(label, prob);
             }
         };
 

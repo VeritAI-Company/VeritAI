@@ -1,4 +1,3 @@
-// 검사 결과 캐시와 이미 검사한 사진 기록
 import { MAX_CACHE_SIZE } from '../config/constants';
 
 export const scanCache = new Map();

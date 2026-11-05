@@ -1,11 +1,10 @@
-// 겹친 사진, 가려진 사진 처리
-import { clearMediaHighlight, getCheckButton, isVisibleMedia, removeMediaUI } from './dom.js';
+import { clearMediaHighlight, findMediaById, getCheckButton, isVisibleMedia, removeMediaUI } from './dom.js';
 import { autoScanObserver } from './observers.js';
 
 function getOwnerMedia(ui) {
     const host = ui.classList.contains('veritai-check-btn') ? ui : ui.getRootNode()?.host;
     const id = host?.dataset?.veritaiFor;
-    return id ? document.querySelector(`img[data-veritai-id="${id}"], video[data-veritai-id="${id}"]`) : null;
+    return findMediaById(id);
 }
 
 export function pickTopmostUI(hits, x, y) {
@@ -86,16 +85,23 @@ export function hideMediaUI(media) {
     autoScanObserver.unobserve(media);
 }
 
+function rectsOverlap(a, b) {
+    return a.width > 0 && b.width > 0 && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
 export function hideCoveredUIs(topMedia) {
+    const topRect = topMedia.getBoundingClientRect();
+    if (!topRect.width) return;
     const owners = new Set();
     document.querySelectorAll('veritai-host, .veritai-check-btn').forEach(el => {
         const id = el.dataset.veritaiFor;
         if (!id || id === topMedia.dataset.veritaiId) return;
-        const owner = document.querySelector(`img[data-veritai-id="${id}"], video[data-veritai-id="${id}"]`);
+        const owner = findMediaById(id);
         if (owner) owners.add(owner);
     });
     owners.forEach(owner => {
         if (owner.dataset.forceInspect === "true") return;
+        if (!rectsOverlap(owner.getBoundingClientRect(), topRect)) return; // 겹치지 않으면 가려질 일이 없다
         if (isBehind(owner, topMedia)) hideMediaUI(owner);
     });
 }
@@ -104,7 +110,7 @@ export function isBehindInspectedMedia(media) {
     return Array.from(document.querySelectorAll('veritai-host')).some(host => {
         const id = host.dataset.veritaiFor;
         if (!id || id === media.dataset.veritaiId) return false;
-        const inspected = document.querySelector(`img[data-veritai-id="${id}"], video[data-veritai-id="${id}"]`);
+        const inspected = findMediaById(id);
         return Boolean(inspected && inspected.isConnected && isBehind(media, inspected));
     });
 }

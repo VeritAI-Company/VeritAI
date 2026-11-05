@@ -1,6 +1,5 @@
-// 결과창 열기: 판정, 확률 막대, 얼굴 목록, 히트맵, 신고 버튼을 담은 창을 만들고 각 기능을 연결한다
 import { getCamViews } from '../../../shared/heatmap.js';
-import { formatPercent, getFaceCountText, getProbLevel, getVerdictDescription, readDeepfakeFlag } from '../../../shared/judgment.js';
+import { formatPercent, getDecisionReasonText, getFaceCountText, getProbLevel, getVerdictDescription, readDeepfakeFlag } from '../../../shared/judgment.js';
 import { icon } from '../../ui/styles.js';
 import { escapeHTML, formatFrameTime } from '../format.js';
 import { reinspectMedia } from '../inspect.js';
@@ -46,6 +45,7 @@ export function showReportBox(e, { media, status, data, badge, reportKey, report
     const confidence = Number(result.confidence) || 0;
     const meterLevel = getProbLevel(confidence);
     const verdictDesc = getVerdictDescription(isFakeResult, confidence);
+    const reasonText = getDecisionReasonText(result);
     const metaParts = [getFaceCountText(faceCount)];
     if (isVideoMedia && data.frameTime != null) metaParts.push(`영상 ${formatFrameTime(data.frameTime)} 장면`);
 
@@ -62,6 +62,7 @@ export function showReportBox(e, { media, status, data, badge, reportKey, report
 <div class="vr-section">
     <div class="vr-verdict ${isFakeResult ? 'is-fake' : 'is-real'}">${isFakeResult ? '조작 의심' : '정상'}</div>
     <div class="vr-desc">${verdictDesc}</div>
+    ${reasonText ? `<div class="vr-reason">${escapeHTML(reasonText)}</div>` : ''}
     <div class="vr-meter" role="img" aria-label="조작 확률 ${formatPercent(confidence)}">
 <div class="vr-meter-row"><span>조작 확률</span><b>${formatPercent(confidence)}</b></div>
 <div class="vr-track"><span class="vr-fill ${meterLevel}" style="width:${Math.round(confidence * 100)}%"></span></div>

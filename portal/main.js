@@ -1,9 +1,9 @@
-// VeritAI PWA 시작점: 화면 버튼과 이벤트를 연결하고 첫 화면(또는 앱 안 리포트 화면)을 연다
-// 실제 기능은 portal/app/ 폴더의 각 파일에 있다
 import { registerSW } from 'virtual:pwa-register';
 import { startEmbedReport } from './app/embed.js';
 import { cancelFeedback, openFeedback, submitFeedback } from './app/feedback.js';
 import { toggleHeatmap } from './app/heatmapPanel.js';
+import { onClearRecordsClick } from './app/records.js';
+import { refreshServerStatus } from './app/serverStatus.js';
 import { handleFileSelected, inspect, resetAll } from './app/inspect.js';
 import { drawCanvas } from './app/result.js';
 import { $, IS_EMBED_REPORT, state } from './app/state.js';
@@ -28,6 +28,8 @@ $('btn-feedback-open').addEventListener('click', openFeedback);
 $('btn-feedback-cancel').addEventListener('click', cancelFeedback);
 $('feedback-form').addEventListener('submit', submitFeedback);
 $('feedback-reason').addEventListener('input', (e) => e.target.classList.remove('is-invalid'));
+$('btn-clear-records').addEventListener('click', onClearRecordsClick);
+$('server-retry').addEventListener('click', refreshServerStatus);
 
 if (IS_EMBED_REPORT) startEmbedReport();
 else showView('start');

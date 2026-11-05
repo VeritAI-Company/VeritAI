@@ -1,11 +1,10 @@
-// 홈 화면: 사진 찍기, 갤러리, 최근 검사 기록
 import { View, Text, Pressable } from 'react-native';
 import { useTheme } from '../ui/ThemeContext';
 import { Button } from '../ui/common';
 import { sourceLabel, formatDate } from '../format';
 import { formatTime } from '../media';
 
-export function HomeScreen({ onCamera, onGallery, history, onOpenHistory, onClearHistory }) {
+export function HomeScreen({ onCamera, onGallery, history, onOpenHistory, onClearHistory, serverRecordCount = 0 }) {
     const { colors, styles } = useTheme();
     return (
         <View style={styles.gap}>
@@ -26,14 +25,18 @@ export function HomeScreen({ onCamera, onGallery, history, onOpenHistory, onClea
             <View style={styles.card}>
                 <View style={styles.rowBetween}>
                     <Text style={styles.sectionTitle}>최근 검사 기록</Text>
-                    {history.length > 0 && (
+                    {(history.length > 0 || serverRecordCount > 0) && (
                         <Pressable onPress={onClearHistory} hitSlop={8}>
-                            <Text style={styles.linkText}>전체 삭제</Text>
+                            <Text style={styles.linkText}>{history.length > 0 ? '전체 삭제' : '남은 기록 지우기'}</Text>
                         </Pressable>
                     )}
                 </View>
                 {history.length === 0 ? (
-                    <Text style={styles.muted}>아직 검사 기록이 없습니다.</Text>
+                    <Text style={styles.muted}>
+                        {serverRecordCount > 0
+                            ? `서버에 아직 지우지 못한 검사 기록이 ${serverRecordCount}건 있습니다. 처리가 끝난 뒤 "남은 기록 지우기"를 눌러 주세요.`
+                            : '아직 검사 기록이 없습니다.'}
+                    </Text>
                 ) : (
                     history.slice(0, 20).map(item => (
                         <Pressable key={`${item.requestId}-${item.createdAt}`} onPress={() => onOpenHistory(item)} style={styles.historyItem}>

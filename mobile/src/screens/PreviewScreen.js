@@ -1,4 +1,3 @@
-// 미리보기 화면: 검사할 사진 확인, 영상은 검사할 장면 고르기
 import { View, Text, Image, ActivityIndicator, Pressable } from 'react-native';
 import { useTheme } from '../ui/ThemeContext';
 import { formatTime } from '../media';
