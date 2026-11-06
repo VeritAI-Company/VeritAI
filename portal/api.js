@@ -1,12 +1,10 @@
-// 배포 시 서버 주소: portal/.env.production 에 VITE_API_BASE=https://... 지정
-const API_BASE = (import.meta.env?.VITE_API_BASE ?? 'http://localhost:8080').replace(/\/$/, '');
-const DETECTIONS_URL = `${API_BASE}/api/detections`;
-const FEEDBACK_URL = `${API_BASE}/api/feedback`;
+// 분석 서버 주소: 프로젝트 루트 .env 의 VITE_API_BASE (vite.portal.config.js 의 envDir). 없으면 내 컴퓨터(localhost:8080)
+import { AI_STATUS_FRESH_MS, ANALYSIS_MODE, POLL_INITIAL_INTERVAL_MS, POLL_TIMEOUT_MS, SERVER_CHECK_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, apiUrls, clampPollDelay, describeServerStatus, nextPollDelay } from '../shared/api.js';
+import { AI_UNAVAILABLE_CODE, AI_UNAVAILABLE_MESSAGE, aiUnavailableDetail, isAiUnavailable } from '../shared/judgment.js';
+import { clearMyRecords, getOwnerToken, rememberRequestId } from './records.js';
 
-const UPLOAD_TIMEOUT_MS = 20000;
-const POLL_INITIAL_INTERVAL_MS = 300;
-const POLL_MAX_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 180000;
+const API_BASE = import.meta.env?.VITE_API_BASE ?? 'http://localhost:8080';
+const { detections: DETECTIONS_URL, feedback: FEEDBACK_URL, queue: QUEUE_URL } = apiUrls(API_BASE);
 
 export class ApiError extends Error {
     constructor(message, status = 0) {
@@ -41,7 +39,8 @@ export async function requestDetection(blob, onStatus = () => {}) {
     formData.append('file', blob, `capture.${ext}`);
     formData.append('mediaType', 'image');
     formData.append('clientType', 'pwa-portal');
-    formData.append('analysisMode', 'face_crop_only');
+    formData.append('analysisMode', ANALYSIS_MODE);
+    formData.append('ownerToken', getOwnerToken()); // 나중에 내 기록을 지울 수 있도록 함께 보낸다
 
     const response = await fetchWithTimeout(DETECTIONS_URL, { method: 'POST', body: formData });
     const data = await readJson(response);
@@ -50,8 +49,19 @@ export async function requestDetection(blob, onStatus = () => {}) {
         throw new ApiError(data?.message || '분석 요청에 실패했습니다.', response.status);
     }
     if (!data) throw new ApiError('서버 응답을 읽을 수 없습니다.', response.status);
+    if (data.requestId != null) rememberRequestId(data.requestId);
 
-    return handleDetectionPayload(data, onStatus);
+    return ensureAiResult(await handleDetectionPayload(data, onStatus));
+}
+
+// AI 모델이 돌지 않은 결과는 서버가 '확률 0%, 정상'으로 채워 보내므로 결과로 쓰지 않고 오류로 바꾼다
+function ensureAiResult(data) {
+    rememberAiStatus(!isAiUnavailable(data?.result));
+    if (!isAiUnavailable(data?.result)) return data;
+    const err = new ApiError(AI_UNAVAILABLE_MESSAGE, 503);
+    err.code = AI_UNAVAILABLE_CODE;
+    err.detail = aiUnavailableDetail(data.result);
+    throw err;
 }
 
 async function handleDetectionPayload(data, onStatus) {
@@ -66,7 +76,7 @@ async function handleDetectionPayload(data, onStatus) {
 
 async function pollDetection(requestId, firstDelayMs, onStatus) {
     const startedAt = Date.now();
-    let delayMs = clampDelay(firstDelayMs) ?? POLL_INITIAL_INTERVAL_MS;
+    let delayMs = clampPollDelay(firstDelayMs) ?? POLL_INITIAL_INTERVAL_MS;
 
     while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
         await delay(delayMs);
@@ -80,15 +90,9 @@ async function pollDetection(requestId, firstDelayMs, onStatus) {
         if (data.status === 'FAILED') throw new ApiError(data.message || '분석에 실패했습니다.', 500);
 
         onStatus(data.status);
-        delayMs = clampDelay(data.retryAfterMs) ?? Math.min(POLL_MAX_INTERVAL_MS, Math.round(delayMs * 1.25));
+        delayMs = clampPollDelay(data.retryAfterMs) ?? nextPollDelay(delayMs);
     }
     throw new ApiError('분석 시간이 너무 오래 걸립니다.', 408);
-}
-
-function clampDelay(ms) {
-    const value = Number(ms);
-    if (!Number.isFinite(value) || value <= 0) return null;
-    return Math.min(POLL_MAX_INTERVAL_MS, Math.max(POLL_INITIAL_INTERVAL_MS, value));
 }
 
 export async function sendFeedback(requestId, reason) {
@@ -103,9 +107,50 @@ export async function sendFeedback(requestId, reason) {
     }
 }
 
+export async function clearMyDetectionRecords() {
+    try {
+        return await clearMyRecords(DETECTIONS_URL);
+    } catch (err) {
+        if (err instanceof ApiError) throw err;
+        throw new ApiError(err?.message || '검사 기록을 삭제하지 못했습니다.', err?.status ?? 0);
+    }
+}
+
+const AI_STATUS_KEY = 'veritai_ai_status';
+
+function rememberAiStatus(ok) {
+    try { localStorage.setItem(AI_STATUS_KEY, JSON.stringify({ ok, at: Date.now() })); } catch { /* 상태 표시만 못 할 뿐 검사에는 영향 없음 */ }
+}
+
+function hasRecentAiFailure() {
+    try {
+        const status = JSON.parse(localStorage.getItem(AI_STATUS_KEY) || 'null');
+        return Boolean(status && status.ok === false && Date.now() - status.at < AI_STATUS_FRESH_MS);
+    } catch {
+        return false;
+    }
+}
+
+export function serverHost() {
+    try { return new URL(API_BASE).host; } catch { return ''; }
+}
+
+export async function checkServerStatus() {
+    try {
+        const response = await fetchWithTimeout(QUEUE_URL, { cache: 'no-store' }, SERVER_CHECK_TIMEOUT_MS);
+        if (!response.ok) return describeServerStatus(null);
+        return describeServerStatus(await readJson(response), hasRecentAiFailure());
+    } catch {
+        return describeServerStatus(null);
+    }
+}
+
 export function toFriendlyMessage(err) {
+    if (err?.code === AI_UNAVAILABLE_CODE) {
+        return import.meta.env?.DEV ? `${AI_UNAVAILABLE_MESSAGE} (개발용: AI 서버의 모델이 준비되지 않았습니다. ${err.detail})` : AI_UNAVAILABLE_MESSAGE;
+    }
     const status = err?.status ?? 0;
-    if (status === 0) return '서버에 연결할 수 없습니다. 서버가 켜져 있는지 확인해 주세요.';
+    if (status === 0) return import.meta.env?.DEV ? '서버에 연결할 수 없습니다. 서버가 켜져 있는지 확인해 주세요.' : '서버에 연결할 수 없습니다. 인터넷 연결을 확인하고 잠시 후 다시 시도해 주세요.';
     if (status === 429) return '요청이 많습니다. 잠시 후 다시 시도해 주세요.';
     if (status === 408) return '응답이 늦어지고 있습니다. 잠시 후 다시 시도해 주세요.';
     if (status === 400 || status === 415) return '지원하지 않는 이미지입니다. 다른 사진으로 시도해 주세요.';

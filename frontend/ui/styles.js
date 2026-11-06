@@ -1,4 +1,3 @@
-// VeritAI 화면 공통 스타일
 // 배지는 Shadow DOM 안에, 검사 버튼과 리포트는 페이지 DOM에 들어가므로 같은 CSS를 양쪽에 넣는다.
 // 페이지 CSS의 영향을 줄이려고 리포트 안쪽 규칙은 .veritai-details-box 아래로 한정한다.
 
@@ -7,9 +6,9 @@ const THEMED = `.veritai-details-box, #veritai-mini-hint, #veritai-dropzone-wrap
 
 export const VERITAI_CORE_CSS = `
     ${THEMED} {
-        --vr-bg: #1b2331; --vr-surface: #232d3d; --vr-border: #334056; --vr-text: #e3e8ef; --vr-sub: #a8b3c4; --vr-muted: #7a879b;
+        --vr-bg: #1b2331; --vr-surface: #232d3d; --vr-border: #334056; --vr-text: #e3e8ef; --vr-sub: #a8b3c4; --vr-muted: #8b97aa;
         --vr-accent: #6f9be8; --vr-fake: #ef6f72; --vr-real: #52c08c; --vr-warn: #e2a64a; --vr-track: #2e394b;
-        --vr-btn-bg: #4f7fd1; --vr-btn-text: #ffffff; --vr-shadow: 0 12px 32px rgba(8, 12, 20, 0.45);
+        --vr-btn-bg: #3f6fc4; --vr-btn-text: #ffffff; --vr-shadow: 0 12px 32px rgba(8, 12, 20, 0.45);
     }
 
     @keyframes veritai-spin { to { transform: rotate(360deg); } }
@@ -73,6 +72,7 @@ export const VERITAI_CORE_CSS = `
     .veritai-details-box .vr-verdict.is-fake { color: var(--vr-fake); }
     .veritai-details-box .vr-verdict.is-real { color: var(--vr-real); }
     .veritai-details-box .vr-desc { margin-top: 2px; color: var(--vr-sub); }
+    .veritai-details-box .vr-reason { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: var(--vr-surface); font-size: 12px; line-height: 1.5; color: var(--vr-sub); }
 
     .veritai-details-box .vr-meter { margin-top: 12px; }
     .veritai-details-box .vr-meter-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--vr-sub); margin-bottom: 5px; font-variant-numeric: tabular-nums; }
@@ -119,7 +119,7 @@ export const VERITAI_CORE_CSS = `
     .veritai-details-box .vr-face-head { display: flex; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
     .veritai-details-box .vr-face-name { width: 44px; flex-shrink: 0; font-weight: 600; }
     .veritai-details-box .vr-face-head .vr-track { flex: 1; height: 5px; }
-    .veritai-details-box .vr-face-prob { width: 40px; text-align: right; font-weight: 600; }
+    .veritai-details-box .vr-face-prob { min-width: 40px; white-space: nowrap; text-align: right; font-weight: 600; }
     .veritai-details-box .vr-face-info { margin: 3px 0 0 54px; font-size: 11.5px; color: var(--vr-muted); }
     .veritai-details-box .veritai-face-toggle { margin-top: 6px; text-align: center; font-size: 12px; color: var(--vr-sub); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 2px 0; }
     .veritai-details-box .vr-empty { color: var(--vr-sub); font-size: 12px; }

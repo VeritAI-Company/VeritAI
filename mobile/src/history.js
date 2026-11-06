@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { readDeepfakeFlag } from './judgment';
 
 const STORAGE_KEY = 'veritai_history_v1';
 const MAX_ITEMS = 50;
@@ -30,7 +31,7 @@ export function toHistoryEntry(data, { source, mediaType, frameTimeMs = null }) 
     return {
         requestId: data?.requestId,
         createdAt: new Date().toISOString(),
-        isFake: Boolean(result.isDeepfake ?? result.deepfake),
+        isFake: readDeepfakeFlag(result),
         confidence: Number(result.confidence) || 0,
         faceCount: Number.isFinite(result.faceCount) ? result.faceCount : (result.faces || []).length,
         source,

@@ -79,7 +79,10 @@ document.getElementById('clear-cache-btn').addEventListener('click', () => {
                 showNotice(response.message || "검사 기록을 삭제하지 못했습니다.", true);
                 return;
             }
-            showNotice("검사 기록과 캐시를 비웠습니다.");
+            const pendingCount = response.deletion?.pendingIds?.length || 0;
+            showNotice(pendingCount > 0
+                ? `검사 기록과 캐시를 비웠습니다. 처리 중인 검사 ${pendingCount}건은 끝난 뒤 다시 비우면 지워집니다.`
+                : "검사 기록과 캐시를 비웠습니다.");
             loadStatistics();
         });
     });
@@ -108,3 +111,48 @@ function loadStatistics() {
 }
 
 document.addEventListener('DOMContentLoaded', loadStatistics);
+
+// 분석 서버 연결 상태. 팝업은 content script와 모듈을 나눠 쓰면 빌드가 막히므로(vite.config.js) 이 파일 안에 둔다
+const API_BASE = typeof __VERITAI_API_BASE__ !== 'undefined' ? __VERITAI_API_BASE__ : 'http://localhost:8080';
+const SERVER_CHECK_TIMEOUT_MS = 4000;
+const AI_STATUS_KEY = 'veritai_ai_status';
+const AI_STATUS_FRESH_MS = 30 * 60 * 1000; // 30분이 지난 실패 기록은 지금 상태로 보지 않는다
+
+function setServerStatus(level, text) {
+    document.getElementById('server-status').className = `server${level ? ` is-${level}` : ''}`;
+    document.getElementById('server-text').innerText = text;
+    document.getElementById('server-retry').hidden = level === '' || level === 'ok';
+}
+
+async function readRecentAiFailure() {
+    const res = await chrome.storage.local.get([AI_STATUS_KEY]);
+    const status = res[AI_STATUS_KEY];
+    return Boolean(status && status.ok === false && Date.now() - status.at < AI_STATUS_FRESH_MS);
+}
+
+async function checkServerStatus() {
+    setServerStatus('', '분석 서버 확인 중');
+    try { document.getElementById('server-host').innerText = new URL(API_BASE).host; } catch (_) { /* 주소 표시만 건너뛴다 */ }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SERVER_CHECK_TIMEOUT_MS);
+    try {
+        const response = await fetch(`${API_BASE.replace(/\/$/, '')}/api/detections/queue`, { signal: controller.signal, cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const metrics = await response.json();
+        if (metrics.running === false) {
+            setServerStatus('warn', '분석 서버가 검사를 멈췄습니다');
+        } else if (await readRecentAiFailure()) {
+            setServerStatus('warn', '서버 연결됨 · 최근 AI 판정 실패');
+        } else {
+            const queued = Number(metrics.queuedCount) || 0;
+            setServerStatus('ok', queued > 0 ? `분석 서버 연결됨 · 대기 ${queued}건` : '분석 서버 연결됨');
+        }
+    } catch (_) {
+        setServerStatus('error', '분석 서버에 연결할 수 없습니다');
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+document.getElementById('server-retry').addEventListener('click', checkServerStatus);
+checkServerStatus();

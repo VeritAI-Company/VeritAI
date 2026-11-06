@@ -1,18 +1,19 @@
+// 캐시 비우기: 서버의 내 검사 기록을 먼저 지우고, 성공했을 때만 메모리 캐시와 화면을 초기화한다
+// 오늘의 검사 통계는 지우지 않는다 (날짜가 바뀔 때만 팝업에서 초기화)
 export async function clearDetectionCacheFlow({
     getStoredRequestIds,
     deleteRecords,
     clearStoredRequestIds,
     clearMemoryCache,
     clearUi,
-    resetStatistics,
     reattachUi,
 }) {
     const requestIds = await getStoredRequestIds();
     const deletion = await deleteRecords(requestIds);
-    await clearStoredRequestIds();
+    // 정리한 번호만 지운다 (처리 중이라 못 지운 번호는 남겨서 다음에 다시 지운다)
+    await clearStoredRequestIds(deletion?.handledIds ?? requestIds);
     clearMemoryCache();
     clearUi();
-    await resetStatistics();
     reattachUi();
     return deletion;
 }

@@ -5,8 +5,8 @@
   <title>VeritAI</title>
   <style>
     :root {
-      --bg: #1b2331; --surface: #232d3d; --border: #334056; --text: #e3e8ef; --sub: #a8b3c4; --muted: #7a879b;
-      --fake: #ef6f72; --real: #52c08c; --track: #3a465b; --on: #4f7fd1; --knob-on: #ffffff;
+      --bg: #1b2331; --surface: #232d3d; --border: #334056; --text: #e3e8ef; --sub: #a8b3c4; --muted: #8b97aa;
+      --fake: #ef6f72; --real: #52c08c; --warn: #e2a64a; --track: #3a465b; --on: #3f6fc4; --knob-on: #ffffff;
     }
     * { box-sizing: border-box; }
     body { width: 300px; margin: 0; padding: 16px; background: var(--bg); color: var(--text);
@@ -17,6 +17,19 @@
     .head svg { width: 20px; height: 20px; color: #8fb3f0; }
     .head h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.2px; }
     .head .ver { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+    .server { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: -6px 0 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
+    .server-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    .server.is-ok .server-dot { background: var(--real); }
+    .server.is-warn .server-dot { background: var(--warn); }
+    .server.is-error .server-dot { background: var(--fake); }
+    .server.is-warn #server-text { color: var(--warn); }
+    .server.is-error #server-text { color: var(--fake); }
+    #server-text { flex: 1 1 150px; min-width: 0; }
+    .server-meta { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+    .server-host { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .server-retry { padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--sub); font-size: 11px; text-decoration: underline; cursor: pointer; white-space: nowrap; }
+    .server-retry:focus-visible { outline: 2px solid #8fb3ff; outline-offset: 2px; }
 
     .stats { display: grid; grid-template-columns: 1fr 1fr; background: var(--surface); border-radius: 10px; margin-bottom: 14px; }
     .stat { padding: 10px 12px; }
@@ -55,6 +68,15 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4.5 6v6c0 4.5 3.2 7.7 7.5 9 4.3-1.3 7.5-4.5 7.5-9V6L12 3Z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/></svg>
     <h1>VeritAI</h1>
     <span class="ver">v1.1</span>
+  </div>
+
+  <div id="server-status" class="server" role="status" aria-live="polite">
+    <span class="server-dot" aria-hidden="true"></span>
+    <span id="server-text">분석 서버 확인 중</span>
+    <span class="server-meta">
+      <span id="server-host" class="server-host"></span>
+      <button id="server-retry" class="server-retry" type="button" hidden>다시 확인</button>
+    </span>
   </div>
 
   <div class="stats">

@@ -20,6 +20,14 @@
 
   <main>
     <section id="view-start" class="view">
+      <div id="server-status" class="server-status" role="status" aria-live="polite">
+        <span class="server-dot" aria-hidden="true"></span>
+        <span id="server-text">분석 서버 확인 중</span>
+        <span class="server-meta">
+          <span id="server-host" class="server-host"></span>
+          <button id="server-retry" class="server-retry" type="button" hidden>다시 확인</button>
+        </span>
+      </div>
       <div class="card start-card">
         <h2 class="start-title">검사할 사진을 고르세요</h2>
         <p class="start-text">얼굴이 잘 보이는 사진일수록 정확합니다.</p>
@@ -31,6 +39,10 @@
       <p class="privacy-note">
         사진은 최대 1280px로 줄여 분석 서버로만 보내며, 서버에서 일정 기간이 지나면 자동으로 삭제됩니다.
       </p>
+      <div id="records-box" class="records-box" hidden>
+        <button id="btn-clear-records" class="btn btn-ghost btn-small" type="button">이 기기에서 검사한 기록 지우기</button>
+        <p id="records-status" class="records-status" role="status" aria-live="polite" hidden></p>
+      </div>
     </section>
 
     <section id="view-preview" class="view" hidden>
@@ -56,6 +68,7 @@
           <span id="verdict-title" class="verdict-title"></span>
         </div>
         <div id="verdict-desc" class="verdict-desc"></div>
+        <p id="verdict-reason" class="verdict-reason" hidden></p>
         <div class="meter" id="verdict-meter">
           <div class="meter-row"><span>조작 확률</span><b id="verdict-percent"></b></div>
           <span class="track"><span id="verdict-fill" class="fill"></span></span>
