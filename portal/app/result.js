@@ -1,5 +1,5 @@
 import { drawCamGrid, drawViewOutline, getCamViews, pickDefaultCamView, pickHeatmapFace } from '../../shared/heatmap.js';
-import { faceModeLabel, faceQualityLabel, formatPercent, getDecisionReasonText, getFaceColor, getFaceCountText, getFaceFakeProb, getProbLevel, getVerdictDescription, NO_FACE_TEXT, NO_SCORE_TEXT, readDeepfakeFlag, selectVisibleFaces } from '../../shared/judgment.js';
+import { faceModeLabel, faceQualityLabel, formatPercent, getConfidence, getDecisionReasonText, getFaceColor, getFaceCountText, getFaceFakeProb, getProbLevel, getVerdictDescription, NO_FACE_TEXT, NO_SCORE_TEXT, percentWidth, readDeepfakeFlag, selectVisibleFaces } from '../../shared/judgment.js';
 import { resetFeedback } from './feedback.js';
 import { renderHeatmapPanel } from './heatmapPanel.js';
 import { $, state } from './state.js';
@@ -10,23 +10,23 @@ export async function renderResult(data) {
     const result = data.result || {};
     const faces = Array.isArray(result.faces) ? result.faces : [];
     const isFake = readDeepfakeFlag(result);
-    const fakePercent = ((Number(result.confidence) || 0) * 100).toFixed(1);
     const faceCount = Number.isFinite(result.faceCount) ? result.faceCount : faces.length;
 
     const verdict = $('verdict');
     verdict.className = `verdict ${isFake ? 'is-fake' : 'is-real'}`;
     $('verdict-icon').innerHTML = iconSvg(isFake ? 'alert' : 'check');
     $('verdict-title').textContent = isFake ? '조작 의심' : '정상';
-    const confidence = Number(result.confidence) || 0;
+    const confidence = getConfidence(result);
+    const fakePercent = formatPercent(confidence);
     const level = getProbLevel(confidence);
     $('verdict-desc').textContent = getVerdictDescription(isFake, confidence);
     const reasonText = getDecisionReasonText(result);
     $('verdict-reason').textContent = reasonText || '';
     $('verdict-reason').hidden = !reasonText;
-    $('verdict-percent').textContent = `${fakePercent}%`;
+    $('verdict-percent').textContent = fakePercent;
     $('verdict-fill').className = `fill ${level}`;
-    $('verdict-fill').style.width = `${Math.round(confidence * 100)}%`;
-    $('verdict-meter').setAttribute('aria-label', `조작 확률 ${fakePercent}%`);
+    $('verdict-fill').style.width = percentWidth(confidence);
+    $('verdict-meter').setAttribute('aria-label', `조작 확률 ${fakePercent}`);
     $('verdict-detail').textContent = getFaceCountText(faceCount);
     $('request-id').textContent = data.requestId != null ? `요청 번호 ${data.requestId}` : '';
 
@@ -159,7 +159,7 @@ function renderFaceList(faces) {
         track.className = 'track';
         const fill = document.createElement('span');
         fill.className = `fill ${level}`;
-        fill.style.width = `${Math.round((probValue ?? 0) * 100)}%`;
+        fill.style.width = percentWidth(probValue);
         track.append(fill);
         const prob = document.createElement('span');
         prob.className = 'face-prob';

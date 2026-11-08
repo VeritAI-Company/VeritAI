@@ -1,5 +1,5 @@
 // 크롬 확장(frontend)과 PWA(portal)가 함께 쓴다. 표시 기준을 바꾸면 두 곳에 같이 적용된다.
-import { getFaceFakeProb } from './judgment.js';
+import { formatPercent, getFaceFakeProb } from './judgment.js';
 
 export function pickHeatmapFace(result, faces) {
     const views = Array.isArray(result?.cnn?.views) ? result.cnn.views : [];
@@ -46,7 +46,7 @@ const HEATMAP_DIM = 0.4;             // 색이 잘 보이도록 사진을 어둡
 export const HEATMAP_HIDE_FULL_PROB = 0.01; // 사진 전체 확률이 1% 미만이면 탭을 숨긴다
 
 export function getHeatmapNoteText(label, prob) {
-    const lines = [`${label} 영역의 조작 확률은 ${(prob * 100).toFixed(1)}%입니다. 색은 이 영역 안에서 AI가 많이 본 곳이며, 진하기는 사진끼리 비교하는 값이 아닙니다.`];
+    const lines = [`${label} 영역의 조작 확률은 ${formatPercent(prob)}입니다. 색은 이 영역 안에서 AI가 많이 본 곳이며, 진하기는 사진끼리 비교하는 값이 아닙니다.`];
     if (prob < HEATMAP_HIDE_FULL_PROB) lines.push('이 영역에서는 조작 근거를 찾지 못해 표시할 색이 없습니다.');
     else if (prob < HEATMAP_WEAK_PROB) lines.push('조작 근거가 약한 영역이라 히트맵은 참고용입니다.');
     return lines.join(' ');

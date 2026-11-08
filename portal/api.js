@@ -1,6 +1,6 @@
 // 분석 서버 주소: 프로젝트 루트 .env 의 VITE_API_BASE (vite.portal.config.js 의 envDir). 없으면 내 컴퓨터(localhost:8080)
-import { AI_STATUS_FRESH_MS, ANALYSIS_MODE, POLL_INITIAL_INTERVAL_MS, POLL_TIMEOUT_MS, SERVER_CHECK_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, apiUrls, clampPollDelay, describeServerStatus, nextPollDelay } from '../shared/api.js';
-import { AI_UNAVAILABLE_CODE, AI_UNAVAILABLE_MESSAGE, aiUnavailableDetail, isAiUnavailable } from '../shared/judgment.js';
+import { AI_STATUS_FRESH_MS, ANALYSIS_MODE, POLL_INITIAL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_MAX_RETRIES, POLL_TIMEOUT_MS, SERVER_CHECK_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, apiUrls, clampPollDelay, describeServerStatus, isRetryablePollStatus, nextPollDelay } from '../shared/api.js';
+import { AI_UNAVAILABLE_CODE, AI_UNAVAILABLE_MESSAGE, INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, aiUnavailableDetail, isAiUnavailable, isValidResult } from '../shared/judgment.js';
 import { clearMyRecords, getOwnerToken, rememberRequestId } from './records.js';
 
 const API_BASE = import.meta.env?.VITE_API_BASE ?? 'http://localhost:8080';
@@ -57,11 +57,18 @@ export async function requestDetection(blob, onStatus = () => {}) {
 // AI 모델이 돌지 않은 결과는 서버가 '확률 0%, 정상'으로 채워 보내므로 결과로 쓰지 않고 오류로 바꾼다
 function ensureAiResult(data) {
     rememberAiStatus(!isAiUnavailable(data?.result));
-    if (!isAiUnavailable(data?.result)) return data;
-    const err = new ApiError(AI_UNAVAILABLE_MESSAGE, 503);
-    err.code = AI_UNAVAILABLE_CODE;
-    err.detail = aiUnavailableDetail(data.result);
-    throw err;
+    if (isAiUnavailable(data?.result)) {
+        const err = new ApiError(AI_UNAVAILABLE_MESSAGE, 503);
+        err.code = AI_UNAVAILABLE_CODE;
+        err.detail = aiUnavailableDetail(data.result);
+        throw err;
+    }
+    if (!isValidResult(data?.result)) {
+        const err = new ApiError(INVALID_RESULT_MESSAGE, 502);
+        err.code = INVALID_RESULT_CODE;
+        throw err;
+    }
+    return data;
 }
 
 async function handleDetectionPayload(data, onStatus) {
@@ -77,14 +84,27 @@ async function handleDetectionPayload(data, onStatus) {
 async function pollDetection(requestId, firstDelayMs, onStatus) {
     const startedAt = Date.now();
     let delayMs = clampPollDelay(firstDelayMs) ?? POLL_INITIAL_INTERVAL_MS;
+    let failures = 0;
 
     while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
         await delay(delayMs);
-        const response = await fetchWithTimeout(`${DETECTIONS_URL}/${encodeURIComponent(requestId)}`);
-        const data = await readJson(response);
-        if (!response.ok || !data) {
-            throw new ApiError(data?.message || '분석 상태를 확인하지 못했습니다.', response.status);
+        let data;
+        try {
+            const response = await fetchWithTimeout(`${DETECTIONS_URL}/${encodeURIComponent(requestId)}`);
+            data = await readJson(response);
+            if (!response.ok || !data) {
+                throw new ApiError(data?.message || '분석 상태를 확인하지 못했습니다.', response.status);
+            }
+        } catch (err) {
+            // 연결이 잠깐 끊기거나 서버가 잠시 오류를 내도 연속 POLL_MAX_RETRIES 번까지는 다시 묻는다
+            failures += 1;
+            if (isRetryablePollStatus(err?.status) && failures < POLL_MAX_RETRIES) {
+                delayMs = POLL_MAX_INTERVAL_MS;
+                continue;
+            }
+            throw err;
         }
+        failures = 0;
 
         if (data.status === 'DONE' && data.result) return data;
         if (data.status === 'FAILED') throw new ApiError(data.message || '분석에 실패했습니다.', 500);
@@ -146,6 +166,7 @@ export async function checkServerStatus() {
 }
 
 export function toFriendlyMessage(err) {
+    if (err?.code === INVALID_RESULT_CODE) return INVALID_RESULT_MESSAGE;
     if (err?.code === AI_UNAVAILABLE_CODE) {
         return import.meta.env?.DEV ? `${AI_UNAVAILABLE_MESSAGE} (개발용: AI 서버의 모델이 준비되지 않았습니다. ${err.detail})` : AI_UNAVAILABLE_MESSAGE;
     }

@@ -2,7 +2,7 @@ import { readDeepfakeFlag } from '../../shared/judgment.js';
 import { icon } from '../ui/styles.js';
 import { updateStatusBadge } from './badge.js';
 import { getFromCache, getMediaKey, scanCache, scannedMediaKeys } from './cache.js';
-import { clearMediaHighlight, ensureWrapper, getCheckButton, getMediaId, getShadowHost, positionOverlay, removeMediaUI, shouldInspectMedia } from './dom.js';
+import { clearMediaHighlight, ensureWrapper, getCheckButton, getMediaId, getShadowHost, isInWeakAdArea, positionOverlay, removeMediaUI, shouldInspectMedia } from './dom.js';
 import { startInspection } from './inspect.js';
 import { hideCoveredUIs, hideMediaUI, isBehindInspectedMedia, isCoveredByOtherMedia } from './overlap.js';
 import { settings } from './state.js';
@@ -157,7 +157,8 @@ function attachUINow(media, retryCount = 0) {
     media.dataset.veritaiAttached = "true";
     delete media.dataset.veritaiScanned;
 
-    if (settings.isAutoScanMode && media.tagName !== 'VIDEO') {
+    // 자동 모드라도 배너, 프로모션 영역의 사진은 자동으로 보내지 않고 검사 버튼만 붙인다
+    if (settings.isAutoScanMode && media.tagName !== 'VIDEO' && !isInWeakAdArea(media)) {
         autoScanObserver.observe(media);
     } else {
         if (wrapper && !getCheckButton(media) && isBehindInspectedMedia(media)) {
@@ -167,7 +168,7 @@ function attachUINow(media, retryCount = 0) {
         if (wrapper && !getCheckButton(media)) {
             const btn = document.createElement("button");
             btn.innerHTML = `${icon('search')}<span>검사</span>`;
-            btn.setAttribute('aria-label', '이 사진 조작 여부 검사');
+            btn.setAttribute('aria-label', media.tagName === 'VIDEO' ? '이 영상 장면 조작 여부 검사' : '이 사진 조작 여부 검사');
             btn.className = "veritai-check-btn";
             btn.dataset.veritaiFor = getMediaId(media);
             btn.addEventListener("click", (e) => {

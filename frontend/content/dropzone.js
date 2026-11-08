@@ -32,7 +32,8 @@ function attachDropzoneListeners() {
     window.addEventListener('dragenter', (e) => {
         const { miniHint, wrapper } = getDropzoneElements();
         if (!wrapper) return;
-        if (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes("text/uri-list") || e.dataTransfer.types.includes("text/html")) {
+        // 파일이나 사진(링크)을 끌 때만 띄운다. 글자만 끌 때(text/html, text/plain)는 띄우지 않는다
+        if (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes("text/uri-list")) {
             e.preventDefault();
             dragCounter++;
             if (dragCounter === 1) {
@@ -62,6 +63,9 @@ export function injectDropzone() {
     const miniHint = document.createElement('div');
     miniHint.id = 'veritai-mini-hint';
     miniHint.innerHTML = `${icon('upload')}<span class="veritai-mini-text">사진을 끌어다 검사</span>`;
+    // 클릭이 통과하는 안내라 마우스를 올려 펼칠 수 없으므로, 처음 3초만 글자를 보여 주고 아이콘으로 줄인다
+    miniHint.classList.add('is-open');
+    setTimeout(() => miniHint.classList.remove('is-open'), 3000);
     document.body.appendChild(miniHint);
 
     const wrapper = document.createElement('div');
@@ -92,15 +96,29 @@ export function injectDropzone() {
                 analyzeStandaloneMedia(URL.createObjectURL(file), file.type.startsWith('video/'));
             }
         } else {
-            const html = e.dataTransfer.getData('text/html');
-            const srcMatch = html && html.match(/src\s*=\s*['"]([^'"]+)['"]/);
-            if (srcMatch) analyzeStandaloneMedia(srcMatch[1], false);
-            else {
-                const uri = e.dataTransfer.getData('text/uri-list');
-                if (uri) analyzeStandaloneMedia(uri, false);
-            }
+            const src = findDroppedImageUrl(e.dataTransfer);
+            if (src) analyzeStandaloneMedia(src, false);
         }
     });
+}
+
+// 다른 페이지에서 끌어온 사진의 주소. DOMParser로 img의 src만 꺼낸다 (만든 문서는 스크립트를 실행하거나 사진을 불러오지 않는다)
+function findDroppedImageUrl(dataTransfer) {
+    const toAbsolute = (value) => {
+        try {
+            const url = new URL(value, location.href);
+            return ['http:', 'https:', 'data:', 'blob:'].includes(url.protocol) ? url.href : null;
+        } catch { return null; }
+    };
+    const html = dataTransfer.getData('text/html');
+    if (html) {
+        const img = new DOMParser().parseFromString(html, 'text/html').querySelector('img[src]');
+        const src = img && toAbsolute(img.getAttribute('src'));
+        if (src) return src;
+    }
+    // uri-list는 여러 줄일 수 있고 #으로 시작하는 줄은 설명이다
+    const uri = (dataTransfer.getData('text/uri-list') || '').split(/\r?\n/).map(line => line.trim()).find(line => line && !line.startsWith('#'));
+    return uri ? toAbsolute(uri) : null;
 }
 
 export function analyzeStandaloneMedia(src, isVideo) {
@@ -114,13 +132,37 @@ export function analyzeStandaloneMedia(src, isVideo) {
     closeBtn.tabIndex = 0;
     closeBtn.setAttribute('role', 'button');
     closeBtn.setAttribute('aria-label', '모달 닫기');
+    const previousFocus = document.activeElement;
     const closeModal = () => {
         modal.remove();
         if (src.startsWith('blob:')) URL.revokeObjectURL(src);
+        // 모달을 열기 전에 있던 곳으로 포커스를 돌려준다
+        if (previousFocus && previousFocus.isConnected && typeof previousFocus.focus === 'function') previousFocus.focus();
     };
     closeBtn.onclick = closeModal;
     modal.veritaiClose = closeModal;
-    closeBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') closeModal(); };
+    closeBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); closeModal(); } };
+
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'VeritAI 사진 검사');
+    modal.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            closeModal();
+            return;
+        }
+        // Tab으로 이동해도 포커스가 모달 밖 페이지로 나가지 않게 한다
+        if (e.key === 'Tab') {
+            const focusables = Array.from(modal.querySelectorAll('[tabindex="0"], button, video[controls]'));
+            if (focusables.length === 0) return;
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+    });
 
     setTimeout(() => closeBtn.focus(), 100);
 

@@ -88,3 +88,64 @@ test('서버 상태 문구', () => {
     assert.equal(api.describeServerStatus({ running: true, queuedCount: 3 }).text, '분석 서버 연결됨 · 대기 3건');
     assert.equal(api.apiUrls('http://x:8080/').queue, 'http://x:8080/api/detections/queue');
 });
+
+test('사진 압축 기준이 확장, 작업 창, PWA, 앱에서 같다', () => {
+    const api = compile(path.join(root, 'shared', 'api.js'));
+    assert.equal(api.UPLOAD_MAX_SIDE, 1280);
+    assert.equal(api.UPLOAD_IMAGE_TYPE, 'image/jpeg');
+    for (const key of ['UPLOAD_MAX_SIDE', 'UPLOAD_IMAGE_TYPE', 'UPLOAD_IMAGE_QUALITY']) assert.equal(mobileApi[key], api[key], key);
+    // worker.js는 빌드 때 그대로 복사되는 파일이라 shared를 가져오지 못해 값을 글자로 비교한다
+    const worker = fs.readFileSync(path.join(root, 'frontend', 'worker.js'), 'utf8');
+    assert.match(worker, new RegExp(`MAX_UPLOAD_SIZE = ${api.UPLOAD_MAX_SIDE};`));
+    assert.match(worker, new RegExp(`UPLOAD_TYPE = '${api.UPLOAD_IMAGE_TYPE}';`));
+    assert.match(worker, new RegExp(`UPLOAD_QUALITY = ${api.UPLOAD_IMAGE_QUALITY};`));
+});
+
+test('결과 조회 다시 시도 기준이 웹과 앱에서 같다', () => {
+    const api = compile(path.join(root, 'shared', 'api.js'));
+    assert.equal(mobileApi.POLL_MAX_RETRIES, api.POLL_MAX_RETRIES);
+    const retryable = [0, 200, 408, 429, 500, 503];
+    const fatal = [400, 401, 403, 404, 415];
+    for (const lib of [api, mobileApi]) {
+        for (const status of retryable) assert.equal(lib.isRetryablePollStatus(status), true, `${status}`);
+        for (const status of fatal) assert.equal(lib.isRetryablePollStatus(status), false, `${status}`);
+        assert.equal(lib.isRetryablePollStatus(undefined), true);
+    }
+});
+
+test('결과 형식 확인: 비었거나 이상한 결과는 판정으로 쓰지 않는다 (웹과 앱 같음)', () => {
+    for (const lib of [shared, mobile]) {
+        assert.equal(lib.isValidResult({ isDeepfake: true, confidence: 0.82 }), true);
+        assert.equal(lib.isValidResult({ deepfake: false, confidence: '0.1' }), true);
+        assert.equal(lib.isValidResult({}), false);
+        assert.equal(lib.isValidResult(null), false);
+        assert.equal(lib.isValidResult({ isDeepfake: false }), false);
+        assert.equal(lib.isValidResult({ isDeepfake: false, confidence: null }), false);
+        assert.equal(lib.isValidResult({ isDeepfake: false, confidence: 'abc' }), false);
+        assert.equal(lib.isValidResult({ isDeepfake: 'maybe', confidence: 0.3 }), false);
+        assert.equal(lib.readDeepfakeFlag({ isDeepfake: 'false' }), false);
+        assert.equal(lib.readDeepfakeFlag({ isDeepfake: 'true' }), true);
+        assert.equal(lib.readDeepfakeFlag({}), false);
+    }
+});
+
+test('확률 표시: 기준 바로 아래 값이 기준값으로 보이지 않고, 범위를 벗어나지 않는다 (웹과 앱 같음)', () => {
+    const cases = [
+        [0.4996, 1, '49.9%'], [0.5, 1, '50.0%'], [0.82, 1, '82.0%'], [0.797, 0, '79%'], [0.8, 0, '80%'],
+        [0.29, 0, '29%'], [0.57, 0, '57%'], [0.999999, 1, '99.9%'], [1, 1, '100.0%'],
+        [1.7, 0, '100%'], [-0.3, 0, '0%'], ['abc', 1, '0.0%'], [null, 0, '0%'],
+    ];
+    for (const lib of [shared, mobile]) {
+        for (const [value, digits, expected] of cases) assert.equal(lib.formatPercent(value, digits), expected, `${value}`);
+        assert.equal(lib.percentWidth(1.7), '100%');
+        assert.equal(lib.getConfidence({ confidence: -1 }), 0);
+    }
+    for (let i = 0; i <= 100; i += 1) assert.equal(shared.formatPercent(i / 100, 0), `${i}%`, `${i}/100`);
+});
+
+test('판정 이유 문구가 경계값에서 모순되지 않는다', () => {
+    const edge = { decisionReason: 'below_combined_thresholds', maxProbability: 0.797, averageProbability: 0.4996 };
+    for (const lib of [shared, mobile]) {
+        assert.equal(lib.getDecisionReasonText(edge), '한 얼굴이 79%로 나왔지만 단독 기준(80%)보다 낮고, 얼굴 평균도 49%라 정상으로 판정했습니다.');
+    }
+});

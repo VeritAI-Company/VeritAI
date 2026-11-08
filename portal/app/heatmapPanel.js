@@ -1,5 +1,5 @@
 import { getCamViews, getHeatmapNoteText, getHeatmapViewLabel, HEATMAP_HIDE_FULL_PROB } from '../../shared/heatmap.js';
-import { selectVisibleFaces } from '../../shared/judgment.js';
+import { formatPercent, selectVisibleFaces } from '../../shared/judgment.js';
 import { drawCanvas } from './result.js';
 import { $, state } from './state.js';
 
@@ -38,7 +38,7 @@ export function renderHeatmapPanel() {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = `heatmap-view-btn${view === selected ? ' is-active' : ''}`;
-        btn.textContent = `${getHeatmapViewLabel(view.name)} ${((view.fakeProbability ?? 0) * 100).toFixed(1)}%`;
+        btn.textContent = `${getHeatmapViewLabel(view.name)} ${formatPercent(view.fakeProbability)}`;
         btn.addEventListener('click', () => {
             state.heatmapView = view.name;
             renderHeatmapPanel();

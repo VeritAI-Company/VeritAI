@@ -1,5 +1,5 @@
 import { HEATMAP_HIDE_FULL_PROB, drawCamGrid, drawViewOutline, getHeatmapNoteText, getHeatmapViewLabel, pickDefaultCamView, pickHeatmapFace } from '../../../shared/heatmap.js';
-import { NO_SCORE_TEXT, getFaceColor, getFaceFakeProb, selectVisibleFaces } from '../../../shared/judgment.js';
+import { NO_SCORE_TEXT, formatPercent, getFaceColor, getFaceFakeProb, selectVisibleFaces } from '../../../shared/judgment.js';
 import { escapeHTML } from '../format.js';
 
 export function setupReportVisual({ detailsBox, result, faces, camViews, hasHeatmap, reportImageSrc, faceList }) {
@@ -123,7 +123,7 @@ export function setupReportVisual({ detailsBox, result, faces, camViews, hasHeat
             if (viewTabsEl) {
                 viewTabsEl.innerHTML = tabViews.map(view => {
                     const active = view === selectedCamView;
-                    const prob = ((view.fakeProbability ?? 0) * 100).toFixed(1);
+                    const prob = formatPercent(view.fakeProbability).slice(0, -1);
                     return `<button class="veritai-heatmap-view-btn${active ? ' is-active' : ''}" data-view="${escapeHTML(view.name)}">${escapeHTML(getHeatmapViewLabel(view.name))} ${prob}%</button>`;
                 }).join('');
             }

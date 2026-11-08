@@ -5,9 +5,47 @@ export const FACE_FAKE_MIN = 0.5;      // 이 확률 이상이면 조작 의심
 export const FACE_CAUTION_MIN = 0.3;   // 이 확률 이상이면 주의
 export const FACE_DETECTION_MIN = 0.5; // 인식 신뢰도가 이보다 낮은 얼굴은 목록에서 처음에 접어 둔다
 
+// 결과를 화면에 쓰기 전에 형식을 확인한다. 판정 값이 참/거짓이 아니거나 확률이 숫자가 아니면 결과로 쓰지 않는다
+// (값이 비어 있을 때 '정상, 0%'로 보이는 것을 막는다)
+export const INVALID_RESULT_MESSAGE = '분석 결과를 읽을 수 없습니다. 다시 시도해 주세요.';
+export const INVALID_RESULT_CODE = 'INVALID_RESULT';
+
+function parseDeepfakeFlag(value) {
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return null;
+}
+
+export function isValidResult(result) {
+    if (!result || typeof result !== 'object') return false;
+    const confidence = result.confidence;
+    return parseDeepfakeFlag(result.isDeepfake ?? result.deepfake) !== null
+        && confidence !== null && confidence !== '' && Number.isFinite(Number(confidence));
+}
+
 export function readDeepfakeFlag(result) {
-    if (!result) return false;
-    return Boolean(result.isDeepfake ?? result.deepfake);
+    return parseDeepfakeFlag(result?.isDeepfake ?? result?.deepfake) === true;
+}
+
+// 확률은 0~1 사이로 자른다
+export function clampProb(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0;
+}
+
+export function getConfidence(result) {
+    return clampProb(result?.confidence);
+}
+
+// 반올림하면 기준 바로 아래 값(0.4996)이 기준값(50.0%)으로 보이므로 버림으로 표시한다.
+// 0.29 * 100 = 28.999... 같은 소수 오차는 아주 작은 값을 더해 막는다
+export function formatPercent(value, digits = 1) {
+    const scale = 10 ** digits;
+    return `${(Math.floor(clampProb(value) * 100 * scale + 1e-9) / scale).toFixed(digits)}%`;
+}
+
+export function percentWidth(value) {
+    return `${Math.round(clampProb(value) * 100)}%`;
 }
 
 export const NO_SCORE_TEXT = '판정 없음'; // 얼굴은 찾았지만 그 얼굴의 조작 확률이 없을 때
@@ -35,7 +73,7 @@ export function getFaceCountText(faceCount) {
 
 export function faceFakeProb(face) {
     const value = face?.cnn?.fakeProbability ?? face?.fakeProbability;
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    return typeof value === 'number' && Number.isFinite(value) ? clampProb(value) : null;
 }
 
 export function faceColor(prob, colors) {
@@ -83,7 +121,7 @@ export function getDecisionInfo(result) {
 
 export function getDecisionReasonText(result) {
     const info = getDecisionInfo(result);
-    const pct = value => `${Math.round((value ?? 0) * 100)}%`;
+    const pct = value => formatPercent(value ?? 0, 0);
     switch (info.reason) {
         case 'high_single_face_probability':
             return `한 얼굴에서 강한 조작 흔적이 보였습니다 (가장 높은 얼굴 ${pct(info.maxProbability)}).`;

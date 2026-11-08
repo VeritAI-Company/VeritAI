@@ -1,6 +1,6 @@
 // PWA의 내 검사 기록: 소유자 토큰과 검사 번호를 이 브라우저(localStorage)에 저장하고, 서버 기록을 지운다
 // 삭제 순서는 확장과 같은 shared/records.js 를 쓴다
-import { createOwnerToken, deleteRecordsOnServer, isValidOwnerToken, normalizeRequestIds } from '../shared/records.js';
+import { STORED_REQUEST_IDS_MAX, createOwnerToken, deleteRecordsOnServer, isValidOwnerToken, normalizeRequestIds } from '../shared/records.js';
 
 const OWNER_TOKEN_KEY = 'veritai_owner_token';
 const REQUEST_IDS_KEY = 'veritai_detection_request_ids';
@@ -32,7 +32,7 @@ export function rememberRequestId(requestId) {
     const id = Number(requestId);
     if (!Number.isSafeInteger(id) || id <= 0 || ids.includes(id)) return;
     ids.push(id);
-    write(REQUEST_IDS_KEY, JSON.stringify(ids));
+    write(REQUEST_IDS_KEY, JSON.stringify(ids.slice(-STORED_REQUEST_IDS_MAX)));
 }
 
 function forgetRequestIds(handledIds) {

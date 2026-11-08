@@ -30,7 +30,7 @@ export function runWithInspectionLimit(task, media = null) {
 function drainInspectionQueue() {
     while (activeInspectionCount < MAX_CONCURRENT_INSPECTIONS && pendingInspectionQueue.length > 0) {
         const next = pendingInspectionQueue.shift();
-        if (next.media && (!next.media.isConnected || (!isUserRequested(next.media) && !shouldInspectMedia(next.media)))) {
+        if (next.media && (!next.media.isConnected || (!isUserRequested(next.media) && !shouldInspectMedia(next.media, { auto: true })))) {
             next.reject(new Error("검사 대상이 화면에서 사라졌습니다."));
             continue;
         }

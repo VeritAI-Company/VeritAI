@@ -7,6 +7,20 @@ export const UPLOAD_TIMEOUT_MS = 20000;       // 사진 보내기 시간 제한
 export const POLL_INITIAL_INTERVAL_MS = 300;  // 결과를 처음 물어보는 간격
 export const POLL_MAX_INTERVAL_MS = 2000;     // 결과를 물어보는 가장 긴 간격
 export const POLL_TIMEOUT_MS = 180000;        // 결과를 기다리는 최대 시간 (3분)
+export const POLL_MAX_RETRIES = 3;            // 결과 조회가 연속으로 이만큼 실패하면 포기한다 (그 전에는 다시 묻는다)
+
+// 결과 조회 실패 가운데 다시 물어볼 만한 것: 연결 실패(0), 응답은 왔지만 읽지 못함(2xx), 시간 초과, 요청 과다, 서버 오류.
+// 404(서버 재시작으로 기록 없음) 같은 나머지 4xx는 다시 물어도 같으니 바로 실패로 본다
+export function isRetryablePollStatus(status) {
+    const value = Number(status) || 0;
+    return value < 400 || value === 408 || value === 429 || value >= 500;
+}
+
+// 사진을 다시 압축할 때의 기준. 채널마다 압축 흔적이 달라지지 않게 세 채널이 같은 값을 쓴다
+// mobile/src/api.js와 frontend/worker.js에도 같은 값이 있고, 테스트가 같은지 검사한다
+export const UPLOAD_MAX_SIDE = 1280;           // 긴 변 최대 길이(px)
+export const UPLOAD_IMAGE_TYPE = 'image/jpeg'; // 다시 압축할 때 형식
+export const UPLOAD_IMAGE_QUALITY = 0.92;      // 다시 압축할 때 품질
 
 export function apiUrls(base) {
     const root = String(base).replace(/\/$/, '');

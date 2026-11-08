@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { useTheme } from '../ui/ThemeContext';
 import { formatTime } from '../media';
-import { selectVisibleFaces, faceColor, faceFakeProb, FACE_MODE_LABELS, FACE_QUALITY_LABELS, readDeepfakeFlag, getVerdictDescription, getFaceCountText, getDecisionReasonText, NO_SCORE_TEXT } from '../judgment';
+import { selectVisibleFaces, faceColor, faceFakeProb, FACE_MODE_LABELS, FACE_QUALITY_LABELS, readDeepfakeFlag, getVerdictDescription, getFaceCountText, getDecisionReasonText, NO_SCORE_TEXT, getConfidence, formatPercent, percentWidth } from '../judgment';
 import { Button } from '../ui/common';
 
 export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, onHome }) {
@@ -10,8 +10,8 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
     const result = data.result || {};
     const faces = Array.isArray(result.faces) ? result.faces : [];
     const isFake = readDeepfakeFlag(result);
-    const confidence = Number(result.confidence) || 0;
-    const percent = (confidence * 100).toFixed(1);
+    const confidence = getConfidence(result);
+    const percent = formatPercent(confidence);
     const faceCount = Number.isFinite(result.faceCount) ? result.faceCount : faces.length;
     const verdictDesc = getVerdictDescription(isFake, confidence);
     const reasonText = getDecisionReasonText(result);
@@ -23,7 +23,7 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
 
     return (
         <View style={styles.gap}>
-            <View style={styles.verdict} accessible accessibilityLabel={`${isFake ? '조작 의심' : '정상'}. ${verdictDesc} ${reasonText || ''} 조작 확률 ${percent}%`}>
+            <View style={styles.verdict} accessible accessibilityLabel={`${isFake ? '조작 의심' : '정상'}. ${verdictDesc} ${reasonText || ''} 조작 확률 ${percent}`}>
                 <Text style={[styles.verdictTitle, { color: isFake ? colors.fake : colors.real }]}>
                     {isFake ? '조작 의심' : '정상'}
                 </Text>
@@ -31,10 +31,10 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
                 {!!reasonText && <Text style={styles.verdictReason}>{reasonText}</Text>}
                 <View style={styles.meterRow}>
                     <Text style={styles.meterLabel}>조작 확률</Text>
-                    <Text style={styles.meterValue}>{percent}%</Text>
+                    <Text style={styles.meterValue}>{percent}</Text>
                 </View>
                 <View style={styles.track}>
-                    <View style={[styles.fill, { width: `${Math.round(confidence * 100)}%`, backgroundColor: faceColor(confidence, colors) }]} />
+                    <View style={[styles.fill, { width: percentWidth(confidence), backgroundColor: faceColor(confidence, colors) }]} />
                 </View>
                 <View style={styles.meterScale}>
                     <Text style={styles.scaleText}>0</Text>
@@ -50,7 +50,7 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
                         const prob = faceFakeProb(face);
                         const info = [
                             FACE_MODE_LABELS[face.faceMode] || face.faceMode || '-',
-                            `인식 신뢰도 ${((face.detectionConfidence ?? face.score ?? 0) * 100).toFixed(0)}%`,
+                            `인식 신뢰도 ${formatPercent(face.detectionConfidence ?? face.score ?? 0, 0)}`,
                             `화질 ${FACE_QUALITY_LABELS[face.quality?.label] || face.quality?.label || '-'}`,
                         ].join(' · ');
                         return (
@@ -58,10 +58,10 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
                                 <View style={styles.faceRowLine}>
                                     <Text style={styles.faceName}>얼굴 {i + 1}</Text>
                                     <View style={[styles.track, styles.faceTrack]}>
-                                        <View style={[styles.fill, { width: `${Math.round((prob ?? 0) * 100)}%`, backgroundColor: faceColor(prob, colors) }]} />
+                                        <View style={[styles.fill, { width: percentWidth(prob), backgroundColor: faceColor(prob, colors) }]} />
                                     </View>
                                     <Text style={[styles.faceProb, { color: faceColor(prob, colors) }]}>
-                                        {prob != null ? `${(prob * 100).toFixed(0)}%` : NO_SCORE_TEXT}
+                                        {prob != null ? formatPercent(prob, 0) : NO_SCORE_TEXT}
                                     </Text>
                                 </View>
                                 <Text style={styles.faceInfo}>{info}</Text>
