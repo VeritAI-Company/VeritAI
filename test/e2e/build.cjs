@@ -70,6 +70,8 @@ function buildPages() {
     const colors = [[200, 80, 60], [60, 160, 90], [70, 90, 200], [180, 170, 40], [150, 60, 160]];
     colors.forEach((c, i) => write(path.join(site, 'img', `p${i}.png`), png(320, 240, c)));
     write(path.join(site, 'img', 'tiny.png'), png(40, 30, [10, 10, 10]));
+    write(path.join(site, 'img', 'edge79.png'), png(79, 200, [90, 90, 90])); // 짧은 변 79px: 거절
+    write(path.join(site, 'img', 'edge80.png'), png(80, 80, [90, 90, 90]));  // 짧은 변 80px: 통과
     write(path.join(site, 'img', 'big.png'), png(1600, 1200, [120, 110, 100]));
     write(path.join(site, 'img', 'broken.png'), Buffer.from('not really a png'.repeat(50)));
     write(path.join(site, 'img', 'doc.pdf'), Buffer.from('%PDF-1.4 fake'));
@@ -79,6 +81,13 @@ function buildPages() {
 <img id="b" src="/img/p1.png" width="320" height="240">
 <img id="c" src="/img/p0.png" width="320" height="240">
 <img id="t" src="/img/tiny.png" width="40" height="30">
+</body></html>`);
+
+    // 화면(1280x720) 가운데에 큰 사진이 있는 페이지. 끌어다 놓기 모달이 이 사진 위에 뜬다
+    write(path.join(site, 'page', 'hero.html'), `<!doctype html><html><body style="margin:0;background:#fff">
+<img id="hero" src="/img/p2.png" style="position:absolute;left:190px;top:100px;width:900px;height:520px">
+<img id="s1" src="/img/p0.png" style="position:absolute;left:10px;top:10px;width:120px;height:90px">
+<img id="s2" src="/img/p1.png" style="position:absolute;left:1140px;top:620px;width:120px;height:90px">
 </body></html>`);
 
     write(path.join(site, 'page', 'overlap.html'), `<!doctype html><html><body style="margin:20px">

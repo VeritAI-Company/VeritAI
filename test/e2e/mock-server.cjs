@@ -27,6 +27,14 @@ function base(prob = 0.82) {
     };
 }
 
+function fullFallback(...qualities) {
+    const faces = qualities.map((label, i) => face(20 + i * 160, 10, 120, 140, null, { quality: { label } }));
+    return {
+        ...base(0.1), analysisScope: 'full_fallback', decisionReason: 'full_image_below_threshold', faceCount: faces.length, faces,
+        cnn: { modelLoaded: true, winningView: 'full', views: [{ name: 'full', fakeProbability: 0.1, cam: grid(14) }] },
+    };
+}
+
 const SCENARIOS = {
     fake: () => base(0.82),
     real: () => base(0.12),
@@ -44,6 +52,9 @@ const SCENARIOS = {
         ...base(0.82), faceCount: 5,
         faces: [{ bbox: null, detectionConfidence: 0.9, cnn: { fakeProbability: 0.7 } }, { detectionConfidence: 0.9 }, face(-50, -40, 100, 100, 0.4), face(380, 280, 500, 500, 0.6), face(10, 10, 0, 0, 0.9)],
     }),
+    // 얼굴은 찾았지만 AI가 분석에 쓰지 못해 사진 전체로 판정한 응답 (얼굴에는 확률이 없다)
+    low_quality_faces: () => fullFallback('poor', 'poor'),
+    unreadable_faces: () => fullFallback('poor', 'good'),
     bad_cam: () => ({
         ...base(0.82),
         cnn: { modelLoaded: true, winningView: 'face_9', views: [
@@ -53,7 +64,7 @@ const SCENARIOS = {
     }),
 };
 
-const state = { mode: 'fake', delay: 0, posts: 0, deletes: 0, nextId: 1, known: new Set(), pending: new Set(), queueRunning: true, down: false };
+const state = { mode: 'fake', delay: 0, posts: 0, lastMediaType: null, deletes: 0, nextId: 1, known: new Set(), pending: new Set(), queueRunning: true, down: false };
 
 function send(res, code, body, raw) {
     res.writeHead(code, {
@@ -87,7 +98,7 @@ const api = http.createServer(async (req, res) => {
         return send(res, 200, state.mode);
     }
     if (url.pathname === '/__restart') { state.known.clear(); state.pending.clear(); return send(res, 200, {}); }
-    if (url.pathname === '/__stats') return send(res, 200, { posts: state.posts, deletes: state.deletes, known: [...state.known] });
+    if (url.pathname === '/__stats') return send(res, 200, { posts: state.posts, lastMediaType: state.lastMediaType, deletes: state.deletes, known: [...state.known] });
     if (state.down) { req.socket.destroy(); return; }
 
     if (req.method === 'GET' && url.pathname === '/api/detections/queue') {
@@ -95,8 +106,9 @@ const api = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/detections') {
-        await readBody(req);
+        const body = await readBody(req);
         state.posts += 1;
+        state.lastMediaType = /name="mediaType"\r?\n\r?\n([^\r\n]+)/.exec(body)?.[1] ?? null;
         if (state.delay) await new Promise(r => setTimeout(r, state.delay));
         const id = state.nextId++;
         state.known.add(id);
