@@ -189,6 +189,7 @@ main { max-width: 480px; margin: 0 auto; }
 
 .is-embed .app-header,
 .is-embed .js-restart,
+.is-embed #btn-retry,
 .is-embed .pwa-status { display: none !important; }
 
 .pwa-status { max-width: 480px; margin: 20px auto 0; font-size: 12px; color: var(--muted); text-align: center; }

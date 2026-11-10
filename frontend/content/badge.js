@@ -2,7 +2,7 @@ import { formatPercent } from '../../shared/judgment.js';
 import { VERITAI_CORE_CSS, icon } from '../ui/styles.js';
 import { clearMediaHighlight, ensureWrapper, getCheckButton, getMediaId, getShadowHost, positionOverlay } from './dom.js';
 import { startInspection } from './inspect.js';
-import { showReportBox as openReportBox } from './report/report.js';
+import { getReportBoxes, showReportBox as openReportBox } from './report/report.js';
 import { settings } from './state.js';
 
 export function updateStatusBadge(media, status, data = null) {
@@ -56,6 +56,8 @@ export function updateStatusBadge(media, status, data = null) {
     badge.onmouseleave = null;
     badge.onkeydown = null;
     badge.removeAttribute('style');
+    badge.removeAttribute('title');
+    badge.removeAttribute('aria-label');
     badge.className = `veritai-status-badge is-${status}`;
     clearMediaHighlight(media);
 
@@ -73,12 +75,18 @@ export function updateStatusBadge(media, status, data = null) {
         uiContainer.style.display = 'flex';
         uiContainer.style.opacity = '1';
         badge.innerHTML = icon('alert');
+        const message = data?.message || "검사하지 못했습니다.";
         const errorText = document.createElement('span');
-        errorText.textContent = data?.message || "검사하지 못했습니다.";
+        errorText.className = 'vr-error-text';
+        errorText.textContent = message;
         const retryText = document.createElement('span');
         retryText.className = 'vr-retry';
         retryText.textContent = '다시 시도';
         badge.append(errorText, retryText);
+        // 작은 사진에서는 문구를 '...'으로 줄이고, 마우스를 올리면 전체 문구가 보이게 한다
+        badge.style.maxWidth = `${Math.max(90, (media.clientWidth || 0) - 16)}px`;
+        badge.title = `${message} (누르면 다시 시도)`;
+        badge.setAttribute('aria-label', `${message} 다시 시도`);
 
         const retryAction = (e) => {
             e.stopPropagation();
@@ -162,10 +170,7 @@ export function updateStatusBadge(media, status, data = null) {
         badge.onmouseleave = () => {
             badge.dataset.isHovered = "false";
             setTimeout(() => {
-                let existingBox = null;
-                document.querySelectorAll('.veritai-details-box').forEach(box => {
-                    if (box.dataset.targetMedia === reportKey) existingBox = box;
-                });
+                const existingBox = getReportBoxes().find(box => box.dataset.targetMedia === reportKey) || null;
 
                 if (existingBox && existingBox.dataset.isHovered !== "true" && badge.dataset.isHovered !== "true" && existingBox.dataset.isDragged !== "true" && existingBox.dataset.isFeedbackActive !== "true") {
                     if (existingBox.cleanupListeners) existingBox.cleanupListeners();

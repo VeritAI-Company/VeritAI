@@ -1,6 +1,6 @@
 import { API_URL, POLL_INITIAL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS, FACE_CROP_ANALYSIS_MODE } from '../config/constants.js';
-import { UPLOAD_TIMEOUT_MS, clampPollDelay, nextPollDelay } from '../../shared/api.js';
-import { createOwnerToken, deleteRecordsOnServer, isValidOwnerToken, normalizeRequestIds } from '../../shared/records.js';
+import { POLL_MAX_RETRIES, UPLOAD_TIMEOUT_MS, clampPollDelay, isRetryablePollStatus, nextPollDelay } from '../../shared/api.js';
+import { STORED_REQUEST_IDS_MAX, createOwnerToken, deleteRecordsOnServer, isValidOwnerToken, normalizeRequestIds } from '../../shared/records.js';
 
 const pendingDetectionPolls = new Map();
 let batchPollingActive = false;
@@ -41,7 +41,7 @@ function updateStoredRequestIds(update) {
         const stored = await chrome.storage.local.get([REQUEST_IDS_STORAGE_KEY]);
         const ids = new Set(Array.isArray(stored[REQUEST_IDS_STORAGE_KEY]) ? stored[REQUEST_IDS_STORAGE_KEY].map(Number) : []);
         update(ids);
-        await chrome.storage.local.set({ [REQUEST_IDS_STORAGE_KEY]: Array.from(ids) });
+        await chrome.storage.local.set({ [REQUEST_IDS_STORAGE_KEY]: Array.from(ids).slice(-STORED_REQUEST_IDS_MAX) });
     });
     requestIdsQueue = run.catch(() => {});
     return run;
@@ -139,6 +139,19 @@ function ensureBatchPolling() {
 
 async function runBatchPollingLoop() {
     let delayMs = POLL_INITIAL_INTERVAL_MS;
+    let consecutiveFailures = 0;
+    // 네트워크가 잠깐 끊겨도 연속 POLL_MAX_RETRIES 번까지는 다시 묻는다. 그래도 안 되면 기다리던 검사를 모두 실패로 끝낸다 (true면 반복 종료)
+    const handlePollFailure = (error) => {
+        consecutiveFailures += 1;
+        if (isRetryablePollStatus(error.status) && consecutiveFailures < POLL_MAX_RETRIES) {
+            delayMs = POLL_MAX_INTERVAL_MS;
+            return false;
+        }
+        pendingDetectionPolls.forEach(entry => entry.reject(error));
+        pendingDetectionPolls.clear();
+        return true;
+    };
+
     while (pendingDetectionPolls.size > 0) {
         await delay(delayMs);
         const now = Date.now();
@@ -148,7 +161,11 @@ async function runBatchPollingLoop() {
         });
         timedOut.forEach(key => {
             const entry = pendingDetectionPolls.get(key);
-            if (entry) entry.reject(new Error("Analysis timed out."));
+            if (entry) {
+                const timeoutErr = new Error("Analysis timed out.");
+                timeoutErr.status = 408; // 배지에 '응답이 늦습니다'로 보이게 한다
+                entry.reject(timeoutErr);
+            }
             pendingDetectionPolls.delete(key);
         });
         if (pendingDetectionPolls.size === 0) break;
@@ -166,19 +183,26 @@ async function runBatchPollingLoop() {
                 delayMs = POLL_MAX_INTERVAL_MS;
                 continue;
             }
-            pendingDetectionPolls.forEach(entry => entry.reject(error));
-            pendingDetectionPolls.clear();
-            break;
+            if (handlePollFailure(error)) break;
+            continue;
         }
         clearTimeout(timeoutId);
         if (!response.ok) {
             const error = new Error(`Server response error: ${response.status}`);
-            pendingDetectionPolls.forEach(entry => entry.reject(error));
-            pendingDetectionPolls.clear();
-            break;
+            error.status = response.status;
+            if (handlePollFailure(error)) break;
+            continue;
         }
 
-        const data = await response.json();
+        let data;
+        try {
+            data = await response.json();
+        } catch (error) {
+            // 응답을 읽지 못하면 이번 조회만 실패로 보고 다시 묻는다
+            if (handlePollFailure(error)) break;
+            continue;
+        }
+        consecutiveFailures = 0;
         const items = Array.isArray(data?.items) ? data.items : [];
         let maxRetryAfterMs = 0;
         let completedCount = 0;

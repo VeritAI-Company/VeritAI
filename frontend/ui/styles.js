@@ -1,5 +1,5 @@
-// 배지는 Shadow DOM 안에, 검사 버튼과 리포트는 페이지 DOM에 들어가므로 같은 CSS를 양쪽에 넣는다.
-// 페이지 CSS의 영향을 줄이려고 리포트 안쪽 규칙은 .veritai-details-box 아래로 한정한다.
+// 배지와 결과창은 Shadow DOM 안에, 검사 버튼과 드롭존, 모달은 페이지 DOM에 들어가므로 같은 CSS를 양쪽에 넣는다.
+// 결과창은 report.js의 getReportRoot가 만든 Shadow DOM 안에 있어 사이트 CSS의 영향을 받지 않는다.
 
 const FONT = `-apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`;
 const THEMED = `.veritai-details-box, #veritai-mini-hint, #veritai-dropzone-wrapper, .veritai-standalone-modal`;
@@ -34,7 +34,8 @@ export const VERITAI_CORE_CSS = `
     .veritai-status-badge.is-waiting .vr-dot { border: 1.5px solid #9aa1aa; box-sizing: border-box; }
     .veritai-status-badge.is-error { cursor: pointer; }
     .veritai-status-badge.is-error svg { color: #eab066; }
-    .veritai-status-badge .vr-retry { margin-left: 2px; text-decoration: underline; text-underline-offset: 2px; }
+    .veritai-status-badge .vr-error-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .veritai-status-badge .vr-retry { margin-left: 2px; text-decoration: underline; text-underline-offset: 2px; flex-shrink: 0; }
     .veritai-spinner { width: 11px; height: 11px; border: 1.5px solid rgba(255, 255, 255, 0.3); border-top-color: #eceef0; border-radius: 50%; box-sizing: border-box; animation: veritai-spin 0.8s linear infinite !important; flex-shrink: 0; }
 
     .veritai-check-btn {
@@ -138,12 +139,13 @@ export const VERITAI_CORE_CSS = `
         position: fixed; bottom: 20px; right: 20px; z-index: 2147483645; box-sizing: border-box;
         display: flex; align-items: center; justify-content: center; height: 40px; min-width: 40px; padding: 0 11px;
         background: var(--vr-bg); color: var(--vr-sub); border: 1px solid var(--vr-border); border-radius: 20px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15); opacity: 0.88; cursor: default; overflow: hidden; transition: padding 0.2s ease, opacity 0.2s ease;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15); opacity: 0.88; overflow: hidden; transition: padding 0.2s ease, opacity 0.2s ease;
+        pointer-events: none; /* 안내만 하는 표시라 클릭은 아래 사이트 버튼(상담, 맨 위로 등)으로 통과시킨다 */
     }
     #veritai-mini-hint svg { width: 17px; height: 17px; flex-shrink: 0; }
-    #veritai-mini-hint:hover { opacity: 1; padding: 0 15px; color: var(--vr-text); }
+    #veritai-mini-hint.is-open { opacity: 1; padding: 0 15px; color: var(--vr-text); }
     .veritai-mini-text { font: 600 12px/1 ${FONT}; white-space: nowrap; max-width: 0; opacity: 0; transition: all 0.2s ease; }
-    #veritai-mini-hint:hover .veritai-mini-text { max-width: 140px; opacity: 1; margin-left: 7px; }
+    #veritai-mini-hint.is-open .veritai-mini-text { max-width: 140px; opacity: 1; margin-left: 7px; }
 
     #veritai-dropzone-wrapper { background: var(--vr-bg); border-color: var(--vr-muted); }
     #veritai-dropzone-wrapper.is-over { border-color: var(--vr-accent); background: var(--vr-surface); }

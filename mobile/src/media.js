@@ -1,8 +1,10 @@
 import * as Manipulator from 'expo-image-manipulator';
 import * as VideoThumbnails from 'expo-video-thumbnails';
+import { UPLOAD_IMAGE_QUALITY, UPLOAD_MAX_SIDE } from './api';
 
-const MAX_SIZE = 1280;
-const JPEG_QUALITY = 0.85;
+// 웹과 같은 기준으로 압축한다 (형식은 JPEG, mobile/src/api.js의 UPLOAD_IMAGE_TYPE)
+const MAX_SIZE = UPLOAD_MAX_SIDE;
+const JPEG_QUALITY = UPLOAD_IMAGE_QUALITY;
 const DEFAULT_FRAME_MS = 1000;
 
 export function toFileUri(path) {

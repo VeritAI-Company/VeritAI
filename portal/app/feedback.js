@@ -29,12 +29,17 @@ export async function submitFeedback(event) {
         reasonInput.focus();
         return;
     }
-    if (state.data?.requestId == null) return;
+    const status = $('feedback-status');
+    if (state.data?.requestId == null) {
+        status.textContent = '요청 번호가 없어 신고할 수 없습니다. 사진을 다시 검사한 뒤 신고해 주세요.';
+        status.className = 'feedback-status is-error';
+        status.hidden = false;
+        return;
+    }
 
     const submitBtn = $('btn-feedback-submit');
     submitBtn.disabled = true;
     submitBtn.textContent = '전송 중...';
-    const status = $('feedback-status');
     try {
         await sendFeedback(state.data.requestId, reason);
         $('feedback-form').hidden = true;

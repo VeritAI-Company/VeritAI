@@ -11,10 +11,10 @@
   },
   "permissions": [
     "activeTab",
-    "tabs",
     "storage",
     "offscreen",
-    "contextMenus"
+    "contextMenus",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "<all_urls>",

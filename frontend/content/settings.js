@@ -143,11 +143,11 @@ function teardownOrphan() {
     clearAllUI();
 }
 
-// 탭을 다시 볼 때 저장된 설정과 화면 상태를 맞춘다 (백그라운드에서 놓친 변경이 있어도 바로잡는다)
 export function startOrphanWatch() {
     orphanCheckTimer = setInterval(() => { if (!isExtensionAlive()) teardownOrphan(); }, 3000);
 }
 
+// 탭을 다시 볼 때 저장된 설정과 화면 상태를 맞춘다 (백그라운드에서 놓친 변경이 있어도 바로잡는다)
 export function syncSettingsFromStorage() {
     if (isOrphaned) return;
     if (!isExtensionAlive()) { teardownOrphan(); return; }

@@ -3,6 +3,7 @@ import { useTheme } from '../ui/ThemeContext';
 import { Button } from '../ui/common';
 import { sourceLabel, formatDate } from '../format';
 import { formatTime } from '../media';
+import { formatPercent } from '../judgment';
 
 export function HomeScreen({ onCamera, onGallery, history, onOpenHistory, onClearHistory, serverRecordCount = 0 }) {
     const { colors, styles } = useTheme();
@@ -47,7 +48,7 @@ export function HomeScreen({ onCamera, onGallery, history, onOpenHistory, onClea
                                 </Text>
                             </View>
                             <Text style={styles.historyMeta}>
-                                조작 확률 {(item.confidence * 100).toFixed(1)}% · 얼굴 {item.faceCount}개 · {sourceLabel(item.source)}
+                                조작 확률 {formatPercent(item.confidence)} · 얼굴 {item.faceCount}개 · {sourceLabel(item.source)}
                                 {item.mediaType === 'video_frame' ? ` · 영상${item.frameTimeMs != null ? ` ${formatTime(item.frameTimeMs)}` : ''}` : ''}
                             </Text>
                             <Text style={styles.historyDate}>{formatDate(item.createdAt)}</Text>

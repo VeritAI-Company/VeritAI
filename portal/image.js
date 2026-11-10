@@ -1,4 +1,4 @@
-const MAX_SIZE = 1280;
+import { UPLOAD_IMAGE_QUALITY, UPLOAD_IMAGE_TYPE, UPLOAD_MAX_SIDE } from '../shared/api.js';
 
 export async function prepareImage(file) {
     if (!file || !file.type.startsWith('image/')) {
@@ -14,8 +14,8 @@ export async function prepareImage(file) {
 
     let width = bitmap.width;
     let height = bitmap.height;
-    if (width > MAX_SIZE || height > MAX_SIZE) {
-        const ratio = Math.min(MAX_SIZE / width, MAX_SIZE / height);
+    if (width > UPLOAD_MAX_SIDE || height > UPLOAD_MAX_SIDE) {
+        const ratio = Math.min(UPLOAD_MAX_SIDE / width, UPLOAD_MAX_SIDE / height);
         width = Math.round(width * ratio);
         height = Math.round(height * ratio);
     }
@@ -26,8 +26,8 @@ export async function prepareImage(file) {
     canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
     bitmap.close();
 
-    let blob = await toBlob(canvas, 'image/webp', 0.85);
-    if (!blob || blob.type !== 'image/webp') blob = await toBlob(canvas, 'image/jpeg', 0.9);
+    // 사진 방향(EXIF)을 바로잡아야 해서 PWA는 항상 다시 압축한다. 기준값은 확장, 앱과 같다 (shared/api.js)
+    const blob = await toBlob(canvas, UPLOAD_IMAGE_TYPE, UPLOAD_IMAGE_QUALITY);
     canvas.width = 0;
     canvas.height = 0;
     if (!blob) throw new Error('사진을 변환하지 못했습니다.');

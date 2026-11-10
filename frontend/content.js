@@ -64,7 +64,10 @@ document.addEventListener('keydown', (e) => {
         closeAllReportBoxes(true);
     }
 
-    if (e.altKey && e.key.toLowerCase() === 'v') {
+    // 글을 쓰는 중이면 Alt+V를 가로채지 않는다 (입력기에 따라 Alt+V로 글자를 넣기도 한다)
+    const target = e.composedPath()[0]; // 결과창(Shadow DOM)의 신고 입력창도 알아보도록 실제 대상을 쓴다
+    const isTyping = target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+    if (e.altKey && !isTyping && e.key.toLowerCase() === 'v') {
         const badges = getAllBadges();
         const fakeBadges = badges.filter(badge => badge.innerText.includes('조작 의심'));
 
@@ -93,7 +96,15 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('click', (e) => {
     if (!e.isTrusted) return;
-    const customUIs = [...document.querySelectorAll('.veritai-check-btn'), ...getAllBadges()];
+    // 클릭한 지점에 VeritAI 버튼이나 배지(Shadow DOM이라 veritai-host로 잡힘)가 없으면 바로 끝낸다
+    const stack = document.elementsFromPoint(e.clientX, e.clientY);
+    // 결과창이나 모달 위를 누른 것이면, 그 아래 깔린 다른 사진의 버튼이 대신 눌리지 않게 한다
+    if (stack[0]?.tagName === 'VERITAI-REPORT-HOST') return;
+    if (!stack.some(el => el.tagName === 'VERITAI-HOST' || el.classList.contains('veritai-check-btn'))) return;
+    const topModal = stack[0]?.closest?.('.veritai-standalone-modal');
+    const ownerOf = ui => (ui.classList.contains('veritai-check-btn') ? ui : ui.getRootNode().host);
+    const customUIs = [...document.querySelectorAll('.veritai-check-btn'), ...getAllBadges()]
+        .filter(ui => !topModal || topModal.contains(ownerOf(ui)));
     if (customUIs.length === 0) return;
     const hits = customUIs.filter(ui => {
         const rect = ui.getBoundingClientRect();

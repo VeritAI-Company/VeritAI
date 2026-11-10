@@ -11,4 +11,9 @@ export const FEEDBACK_URL = urls.feedback;
 export const FACE_CROP_ANALYSIS_MODE = ANALYSIS_MODE;
 export const MAX_CONCURRENT_INSPECTIONS = (navigator.hardwareConcurrency || 4) <= 4 ? 2 : 3;
 export const MAX_CACHE_SIZE = 200;
-export const GLOBAL_AD_SELECTOR = '.adsbygoogle, [id^="google_ads"], [id*="banner"], [class*="banner"], [id*="sponsor"], [class*="sponsor"], [class*="advertisement"], [class*="promo"], [class~="ad"], [class|="ad"]';
+// 광고 판별 두 단계. 확실한 광고는 버튼도 자동 검사도 없다.
+// 애매한 영역은 자동 검사만 빼고 버튼은 붙인다 (기사 메인 사진, 유명인 사칭 광고처럼 직접 확인하고 싶은 사진이 있어서)
+export const STRONG_AD_SELECTOR = '.adsbygoogle, [id^="google_ads"], [class*="advertisement"], [class~="ad"], [class|="ad"]';
+export const WEAK_AD_SELECTOR = '[id*="banner"], [class*="banner"], [id*="sponsor"], [class*="sponsor"], [class*="promo"]';
+export const WEAK_AD_MAX_DEPTH = 4; // 사진 위로 이 단계까지만 본다 (페이지 전체를 감싼 class 때문에 모든 사진이 빠지지 않게)
+export const GLOBAL_AD_SELECTOR = `${STRONG_AD_SELECTOR}, ${WEAK_AD_SELECTOR}`;

@@ -3,8 +3,11 @@ export function setupReportWindow(detailsBox, badge, e) {
     let isDragging = false;
     let startX, startY, initialLeft, initialTop;
 
-    dragHandle.addEventListener('mousedown', (e) => {
-        if (e.target.classList.contains('veritai-close-btn')) return;
+    // 터치와 펜으로도 끌 수 있게 pointer 이벤트를 쓰고, 끄는 동안 페이지가 스크롤되지 않게 한다
+    dragHandle.style.touchAction = 'none';
+    dragHandle.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('.veritai-close-btn')) return;
         isDragging = true;
         detailsBox.dataset.isDragged = "true";
         dragHandle.style.cursor = 'grabbing';
@@ -34,11 +37,12 @@ export function setupReportWindow(detailsBox, badge, e) {
         }
     };
 
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('pointermove', onMouseMove);
+    window.addEventListener('pointerup', onMouseUp);
+    window.addEventListener('pointercancel', onMouseUp);
 
     const updatePosition = () => {
-        if (!document.body.contains(detailsBox)) return;
+        if (!detailsBox.isConnected) return; // Shadow DOM 안이라 document.body.contains로는 찾지 못한다
         if (detailsBox.dataset.isDragged === "true") return;
 
         const margin = 8;
@@ -67,8 +71,11 @@ export function setupReportWindow(detailsBox, badge, e) {
     };
     window.addEventListener('resize', clampPosition);
 
+    // Shadow DOM 안의 이벤트는 페이지에서 보면 target이 바깥 상자로 바뀌므로, 지나온 경로(composedPath)로 판단한다
+    const isInside = (evt, el) => evt.composedPath().includes(el);
+
     const closeOnScroll = (evt) => {
-        if (detailsBox.contains(evt.target)) return;
+        if (isInside(evt, detailsBox)) return;
         if (detailsBox.dataset.isDragged !== "true" && detailsBox.dataset.isFeedbackActive !== "true") {
             if (detailsBox.cleanupListeners) detailsBox.cleanupListeners();
             detailsBox.remove();
@@ -80,8 +87,9 @@ export function setupReportWindow(detailsBox, badge, e) {
     detailsBox.cleanupListeners = () => {
         window.removeEventListener('resize', clampPosition);
         window.removeEventListener('scroll', closeOnScroll, true);
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('pointermove', onMouseMove);
+        window.removeEventListener('pointerup', onMouseUp);
+        window.removeEventListener('pointercancel', onMouseUp);
         if (closeDetails) document.removeEventListener('click', closeDetails);
     };
 
@@ -99,7 +107,7 @@ export function setupReportWindow(detailsBox, badge, e) {
 
     setTimeout(() => {
         closeDetails = (evt) => {
-            if (!detailsBox.contains(evt.target) && !badge.contains(evt.target)) {
+            if (!isInside(evt, detailsBox) && !isInside(evt, badge)) {
                 if (detailsBox.dataset.isDragged !== "true" && detailsBox.dataset.isFeedbackActive !== "true") {
                     if (detailsBox.cleanupListeners) detailsBox.cleanupListeners();
                     detailsBox.remove();

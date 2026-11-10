@@ -1,6 +1,6 @@
 import { getCamViews } from '../../../shared/heatmap.js';
-import { formatPercent, getDecisionReasonText, getFaceCountText, getProbLevel, getVerdictDescription, readDeepfakeFlag } from '../../../shared/judgment.js';
-import { icon } from '../../ui/styles.js';
+import { formatPercent, getConfidence, getDecisionReasonText, getFaceCountText, getProbLevel, getVerdictDescription, percentWidth, readDeepfakeFlag } from '../../../shared/judgment.js';
+import { VERITAI_CORE_CSS, icon } from '../../ui/styles.js';
 import { escapeHTML, formatFrameTime } from '../format.js';
 import { reinspectMedia } from '../inspect.js';
 import { createFaceList } from './faceList.js';
@@ -8,8 +8,29 @@ import { setupReportFeedback } from './feedback.js';
 import { setupReportVisual } from './visual.js';
 import { setupReportWindow } from './window.js';
 
+// 결과창은 사이트 CSS가 섞이지 않도록 Shadow DOM 안에 넣는다. 결과창이 여러 개여도 상자(host)는 하나를 함께 쓴다
+let reportRoot = null;
+
+function getReportRoot() {
+    if (reportRoot && reportRoot.host.isConnected) return reportRoot;
+    const host = document.createElement('veritai-report-host');
+    host.style.cssText = 'position:absolute; top:0; left:0; width:0; height:0; z-index:2147483647; display:block; overflow:visible;';
+    document.body.appendChild(host);
+    reportRoot = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    // all: initial 로 페이지에서 물려받는 글꼴, 색, 줄 간격을 끊는다
+    style.textContent = `:host { all: initial; }\n${VERITAI_CORE_CSS}`;
+    reportRoot.appendChild(style);
+    return reportRoot;
+}
+
+export function getReportBoxes() {
+    if (!reportRoot || !reportRoot.host.isConnected) return [];
+    return Array.from(reportRoot.querySelectorAll('.veritai-details-box'));
+}
+
 export function closeAllReportBoxes(force = false, exceptionSrc = null) {
-    document.querySelectorAll('.veritai-details-box').forEach(box => {
+    getReportBoxes().forEach(box => {
         if (exceptionSrc && box.dataset.targetMedia === exceptionSrc) return;
         if (!force && (box.dataset.isDragged === "true" || box.dataset.isFeedbackActive === "true")) return;
         if (box.cleanupListeners) box.cleanupListeners();
@@ -17,17 +38,10 @@ export function closeAllReportBoxes(force = false, exceptionSrc = null) {
     });
 }
 
-// ctx: 배지 쪽에서 넘겨주는 값 (사진, 판정 상태, 검사 결과, 배지, 결과창 구분 키, 결과창에 보여줄 사진 주소)
 export function showReportBox(e, { media, status, data, badge, reportKey, reportImageSrc }) {
     if (e) { e.preventDefault(); e.stopPropagation(); }
 
-    let existingBox = null;
-    document.querySelectorAll('.veritai-details-box').forEach(box => {
-        if (box.dataset.targetMedia === reportKey) {
-            existingBox = box;
-        }
-    });
-
+    const existingBox = getReportBoxes().find(box => box.dataset.targetMedia === reportKey);
     if (existingBox) return existingBox;
 
     closeAllReportBoxes(false, reportKey);
@@ -42,7 +56,7 @@ export function showReportBox(e, { media, status, data, badge, reportKey, report
 
     const isFakeResult = readDeepfakeFlag(result);
     const faceCount = Number.isFinite(result.faceCount) ? result.faceCount : faces.length;
-    const confidence = Number(result.confidence) || 0;
+    const confidence = getConfidence(result);
     const meterLevel = getProbLevel(confidence);
     const verdictDesc = getVerdictDescription(isFakeResult, confidence);
     const reasonText = getDecisionReasonText(result);
@@ -65,7 +79,7 @@ export function showReportBox(e, { media, status, data, badge, reportKey, report
     ${reasonText ? `<div class="vr-reason">${escapeHTML(reasonText)}</div>` : ''}
     <div class="vr-meter" role="img" aria-label="조작 확률 ${formatPercent(confidence)}">
 <div class="vr-meter-row"><span>조작 확률</span><b>${formatPercent(confidence)}</b></div>
-<div class="vr-track"><span class="vr-fill ${meterLevel}" style="width:${Math.round(confidence * 100)}%"></span></div>
+<div class="vr-track"><span class="vr-fill ${meterLevel}" style="width:${percentWidth(confidence)}"></span></div>
 <div class="vr-meter-scale"><span>0</span><span>판정 기준 50%</span><span>100</span></div>
     </div>
     <div class="vr-meta">${metaParts.join(' · ')}</div>
@@ -114,7 +128,7 @@ export function showReportBox(e, { media, status, data, badge, reportKey, report
         }, 100);
     };
 
-    document.body.appendChild(detailsBox);
+    getReportRoot().appendChild(detailsBox);
 
     setupReportVisual({ detailsBox, result, faces, camViews, hasHeatmap, reportImageSrc, faceList });
     setupReportWindow(detailsBox, badge, e);

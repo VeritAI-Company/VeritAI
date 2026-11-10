@@ -1,4 +1,4 @@
-import { AI_UNAVAILABLE_CODE, AI_UNAVAILABLE_MESSAGE, aiUnavailableDetail, isAiUnavailable, readDeepfakeFlag } from '../../shared/judgment.js';
+import { AI_UNAVAILABLE_CODE, AI_UNAVAILABLE_MESSAGE, INVALID_RESULT_CODE, INVALID_RESULT_MESSAGE, aiUnavailableDetail, isAiUnavailable, isValidResult, readDeepfakeFlag } from '../../shared/judgment.js';
 import { GLOBAL_AD_SELECTOR } from '../config/constants';
 import { captureImageBlob, captureVideoBlob } from '../core/capture.js';
 import { sendToBackend } from '../core/network.js';
@@ -28,7 +28,7 @@ export function reinspectMedia(media) {
 
 export async function startInspection(media) {
     if (!settings.isSystemOn && media.dataset.forceInspect !== "true") return;
-    if (!isUserRequested(media) && !shouldInspectMedia(media)) return;
+    if (!isUserRequested(media) && !shouldInspectMedia(media, { auto: true })) return;
     if (!isUserRequested(media) && (media.dataset.veritaiSuppressed === "true" || isCoveredByOtherMedia(media))) {
         hideMediaUI(media);
         return;
@@ -92,6 +92,12 @@ export async function startInspection(media) {
             aiError.code = AI_UNAVAILABLE_CODE;
             throw aiError;
         }
+        if (!isValidResult(response.result)) {
+            console.warn('[VeritAI] 결과 형식이 올바르지 않아 판정으로 쓰지 않았습니다:', response.result);
+            const formatError = new Error(INVALID_RESULT_MESSAGE);
+            formatError.code = INVALID_RESULT_CODE;
+            throw formatError;
+        }
 
         delete media.dataset.veritaiUserRequest;
         const data = { ...response, frameUrl: URL.createObjectURL(blob), frameTime };
@@ -134,14 +140,15 @@ export async function startInspection(media) {
 
         let friendlyMessage = "검사하지 못했습니다.";
         if (err?.code === AI_UNAVAILABLE_CODE) friendlyMessage = "AI 판정 실패";
+        else if (err?.code === INVALID_RESULT_CODE) friendlyMessage = "결과를 읽을 수 없습니다.";
         else if (isBlocked) friendlyMessage = media.tagName === "VIDEO" ? "이 사이트 영상은 검사할 수 없습니다." : "이 사이트 사진은 검사할 수 없습니다.";
-        else if (err.status === 429) friendlyMessage = "요청이 많습니다.";
-        else if (err.status === 408) friendlyMessage = "응답이 늦습니다.";
-        else if (err.status >= 500) friendlyMessage = "서버 오류가 났습니다.";
+        else if (err?.status === 429) friendlyMessage = "요청이 많습니다.";
+        else if (err?.status === 408) friendlyMessage = "응답이 늦습니다.";
+        else if (err?.status >= 500) friendlyMessage = "서버 오류가 났습니다.";
         else if (err?.name === 'TypeError' && errMessage === 'Failed to fetch') {
             friendlyMessage = "서버에 연결할 수 없습니다.";
         }
-        else if (err.status === 400 || err.status === 415) friendlyMessage = "지원하지 않는 형식입니다.";
+        else if (err?.status === 400 || err?.status === 415) friendlyMessage = "지원하지 않는 형식입니다.";
 
         updateStatusBadge(media, "error", { message: friendlyMessage });
         delete media.dataset.veritaiScanned;
@@ -160,25 +167,9 @@ function rememberAiStatus(ok) {
     chrome.storage.local.set({ veritai_ai_status: { ok, at: Date.now() } });
 }
 
+// 실제 더하기는 백그라운드가 순서대로 한다 (background.js의 recordInspectionStat)
 function recordInspectionStat(isFake) {
-    const today = new Date().toLocaleDateString();
-
-    chrome.storage.local.get(['veritai_stat_date', 'veritai_stat_scanned', 'veritai_stat_blocked'], (res) => {
-        let scanned = res.veritai_stat_scanned || 0;
-        let blocked = res.veritai_stat_blocked || 0;
-
-        if (res.veritai_stat_date !== today) {
-            scanned = 0;
-            blocked = 0;
-        }
-
-        scanned++;
-        if (isFake) blocked++;
-
-        chrome.storage.local.set({
-            veritai_stat_date: today,
-            veritai_stat_scanned: scanned,
-            veritai_stat_blocked: blocked
-        });
-    });
+    try {
+        chrome.runtime.sendMessage({ action: "record_stat", isFake }, () => void chrome.runtime.lastError);
+    } catch { /* 확장 연결이 끊긴 탭이면 통계만 건너뛴다 */ }
 }

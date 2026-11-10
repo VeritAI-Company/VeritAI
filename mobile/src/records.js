@@ -8,6 +8,7 @@ const OWNER_TOKEN_KEY = 'veritai_owner_token';
 const REQUEST_IDS_KEY = 'veritai_detection_request_ids';
 const OWNER_TOKEN_HEADER = 'X-VeritAI-Owner-Token';
 const DELETE_BATCH_MAX = 100; // 서버가 한 번에 받는 최대 개수
+const STORED_REQUEST_IDS_MAX = 500; // 저장해 두는 검사 번호의 최대 개수 (shared/records.js와 같은 값)
 
 
 function isValidOwnerToken(token) {
@@ -68,7 +69,7 @@ export async function getStoredRequestIds() {
 export async function rememberRequestId(requestId) {
     const id = Number(requestId);
     if (!Number.isSafeInteger(id) || id <= 0) return;
-    try { await updateStoredIds(ids => (ids.includes(id) ? ids : [...ids, id])); } catch { /* 저장 못 해도 검사는 계속 */ }
+    try { await updateStoredIds(ids => (ids.includes(id) ? ids : [...ids, id].slice(-STORED_REQUEST_IDS_MAX))); } catch { /* 저장 못 해도 검사는 계속 */ }
 }
 
 async function sendDeleteRequest(url, ownerToken, body) {
@@ -88,6 +89,21 @@ function deletionError(status, data) {
     return error;
 }
 
+// 묶음이 거절되면 한 개씩 다시 지운다. 서버를 재시작하면 저장된 번호가 전부 '없음'으로 거절되므로
+// 하나씩 차례로 보내면 수백 번을 기다려야 한다. 그래서 4개씩 동시에 보낸다 (하나라도 연결 실패면 멈추고 오류를 던진다)
+const ONE_BY_ONE_CONCURRENCY = 4;
+async function deleteOneByOne(ids, deleteOne) {
+    let next = 0;
+    let failed = false;
+    const worker = async () => {
+        while (!failed && next < ids.length) {
+            const id = ids[next++];
+            try { await deleteOne(id); } catch (err) { failed = true; throw err; }
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(ONE_BY_ONE_CONCURRENCY, ids.length) }, worker));
+}
+
 async function deleteRecordsOnServer(ownerToken, ids) {
     const summary = { requestedCount: ids.length, deletedRequestCount: 0, alreadyMissingCount: 0, notOwnedCount: 0, pendingIds: [], handledIds: [] };
     for (let i = 0; i < ids.length; i += DELETE_BATCH_MAX) {
@@ -100,15 +116,17 @@ async function deleteRecordsOnServer(ownerToken, ids) {
         }
         if (![403, 404, 409].includes(batch.status)) throw deletionError(batch.status, batch.data);
 
-        for (const id of chunk) {
+        await deleteOneByOne(chunk, async id => {
             const one = await sendDeleteRequest(`${DETECTIONS_URL}/${id}`, ownerToken);
             if (one.ok) { summary.deletedRequestCount += 1; summary.handledIds.push(id); }
             else if (one.status === 404) { summary.alreadyMissingCount += 1; summary.handledIds.push(id); }
             else if (one.status === 403) { summary.notOwnedCount += 1; summary.handledIds.push(id); }
             else if (one.status === 409) summary.pendingIds.push(id);
             else throw deletionError(one.status, one.data);
-        }
+        });
     }
+    summary.handledIds.sort((a, b) => a - b);
+    summary.pendingIds.sort((a, b) => a - b);
     return summary;
 }
 

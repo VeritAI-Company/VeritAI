@@ -1,4 +1,4 @@
-import { GLOBAL_AD_SELECTOR } from '../config/constants';
+import { STRONG_AD_SELECTOR, WEAK_AD_MAX_DEPTH, WEAK_AD_SELECTOR } from '../config/constants';
 
 let veritaiIdCounter = 0;
 // 번호로 사진을 바로 찾기 위한 목록. 페이지 전체를 다시 뒤지지 않게 한다 (사진이 지워지면 WeakRef라 메모리에 남지 않는다)
@@ -82,10 +82,21 @@ export function isVisibleMedia(media) {
     return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
 }
 
-export function shouldInspectMedia(media) {
+export function isInWeakAdArea(media) {
+    let el = media;
+    for (let depth = 0; el && depth <= WEAK_AD_MAX_DEPTH; depth += 1) {
+        if (el.matches && el.matches(WEAK_AD_SELECTOR)) return true;
+        el = el.parentElement;
+    }
+    return false;
+}
+
+// auto: 자동 검사인지. 애매한 광고 영역은 자동 검사에서만 뺀다
+export function shouldInspectMedia(media, { auto = false } = {}) {
     if (media.closest('.veritai-details-box') || media.closest('.veritai-ui-container')) return false;
     if (window !== window.top) return false;
-    if (media.closest(GLOBAL_AD_SELECTOR)) return false;
+    if (media.closest(STRONG_AD_SELECTOR)) return false;
+    if (auto && isInWeakAdArea(media)) return false;
     const url = (media.src || media.currentSrc || "").toLowerCase();
     const adUrls = ['/ads/', '/ad/', 'doubleclick.net', 'googlesyndication', 'adservice', 'adsystem'];
     if (adUrls.some(ad => url.includes(ad))) return false;

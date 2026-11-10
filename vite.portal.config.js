@@ -16,7 +16,8 @@ export default defineConfig({
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
-      devOptions: { enabled: true },
+      // 개발 서버에서는 끈다. 켜 두면 예전 화면이 남고, 서버를 켤 때마다 휴대폰이 새로 설치하고 새로고침해서 느려진다
+      devOptions: { enabled: false },
       includeAssets: ['icon-192x192.png', 'icon-512x512.png'],
       manifest: {
         name: 'VeritAI Mobile Portal',

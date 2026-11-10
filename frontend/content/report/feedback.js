@@ -18,10 +18,12 @@ export function setupReportFeedback(detailsBox, data) {
             reasonInput.setAttribute('aria-label', '신고 이유');
             reasonInput.addEventListener('input', () => reasonInput.classList.remove('is-invalid'));
             reasonInput.addEventListener('keydown', (e) => {
+                // 한글 입력기는 조합 중인 글자를 확정할 때도 Enter를 보낸다. 그때 제출하면 마지막 글자가 빠지거나 두 번 전송된다
+                if (e.isComposing || e.keyCode === 229) return;
                 if (e.key === 'Escape') {
                     e.stopPropagation();
                     cancelBtn.click();
-                    }
+                }
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     submitBtn.click();

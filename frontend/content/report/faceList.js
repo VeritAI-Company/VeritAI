@@ -1,4 +1,4 @@
-import { NO_FACE_TEXT, NO_SCORE_TEXT, faceModeLabel, faceQualityLabel, formatPercent, getFaceColor, getFaceFakeProb, getProbLevel, selectVisibleFaces } from '../../../shared/judgment.js';
+import { NO_FACE_TEXT, NO_SCORE_TEXT, faceModeLabel, faceQualityLabel, formatPercent, getFaceColor, percentWidth, getFaceFakeProb, getProbLevel, selectVisibleFaces } from '../../../shared/judgment.js';
 import { escapeHTML } from '../format.js';
 
 export function createFaceList(faces) {
@@ -17,7 +17,7 @@ export function createFaceList(faces) {
             <div class="vr-face">
                 <div class="vr-face-head">
                     <span class="vr-face-name">얼굴 ${i + 1}</span>
-                    <span class="vr-track"><span class="vr-fill ${level}" style="width:${Math.round((faceProb ?? 0) * 100)}%"></span></span>
+                    <span class="vr-track"><span class="vr-fill ${level}" style="width:${percentWidth(faceProb)}"></span></span>
                     <span class="vr-face-prob" style="color:${getFaceColor(faceProb)}">${faceProb == null ? NO_SCORE_TEXT : formatPercent(faceProb, 0)}</span>
                 </div>
                 <div class="vr-face-info">${escapeHTML(info.join(' · '))}</div>
