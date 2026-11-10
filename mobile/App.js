@@ -10,6 +10,7 @@ import { ThemeContext, useTheme } from './src/ui/ThemeContext';
 import { loadHistory, addHistory, toHistoryEntry, clearHistory } from './src/history';
 import { clearMyRecords, getStoredRequestIds } from './src/records';
 import { prepareMedia, toFileUri, isVideoMime, clampFrameTime, prepareVideoFrame, formatTime } from './src/media';
+import { parseDurationMs } from './src/sliderMath';
 import { requestDetection, toFriendlyMessage, toErrorDetail, fetchDetection, ensureAiResult } from './src/api';
 import { ReportScreen } from './src/screens/ReportScreen';
 import { Header } from './src/ui/common';
@@ -91,7 +92,7 @@ function Main() {
         if (!hasShareIntent || !shareIntent) return;
         const file = shareIntent.files?.[0];
         if (file?.path) {
-            handleMediaSelected({ uri: toFileUri(file.path), isVideo: isVideoMime(file.mimeType) }, 'share');
+            handleMediaSelected({ uri: toFileUri(file.path), isVideo: isVideoMime(file.mimeType), durationMs: parseDurationMs(file.duration) }, 'share');
         } else {
             setSharedText(shareIntent.webUrl || shareIntent.text || '');
             setScreen('link');
@@ -118,7 +119,7 @@ function Main() {
         if (result.canceled || !result.assets?.length) return;
         const asset = result.assets[0];
         const isVideo = asset.type === 'video' || isVideoMime(asset.mimeType);
-        const durationMs = Number(asset.duration) > 0 ? Number(asset.duration) : null;
+        const durationMs = parseDurationMs(asset.duration);
         handleMediaSelected({ uri: asset.uri, isVideo, durationMs }, 'gallery');
     };
 

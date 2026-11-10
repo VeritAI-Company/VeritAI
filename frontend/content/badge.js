@@ -108,7 +108,7 @@ export function updateStatusBadge(media, status, data = null) {
         if (status === "fake") {
             uiContainer.style.display = 'flex';
             uiContainer.style.opacity = '1';
-            badge.innerHTML = `<span class="vr-dot"></span><span>조작 의심 ${formatPercent(data.result.confidence, 0)}</span>`;
+            badge.innerHTML = `<span class="vr-dot"></span><span>조작 의심 ${formatPercent(data.result.confidence)}</span>`;
             badge.setAttribute('aria-label', `조작 의심, 조작 확률 ${formatPercent(data.result.confidence)}. 결과 자세히 보기`);
             media.style.outline = "2px solid rgba(229, 72, 77, 0.9)";
             media.style.outlineOffset = "-2px";

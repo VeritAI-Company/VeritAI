@@ -14,7 +14,7 @@
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4.5 6v6c0 4.5 3.2 7.7 7.5 9 4.3-1.3 7.5-4.5 7.5-9V6L12 3Z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/></svg>
     <div>
       <h1>VeritAI</h1>
-      <p class="subtitle">사진 속 얼굴의 딥페이크 조작 여부 검사</p>
+      <p class="subtitle">사진·영상 속 얼굴의 딥페이크 조작 여부 검사</p>
     </div>
   </header>
 
@@ -29,15 +29,15 @@
         </span>
       </div>
       <div class="card start-card">
-        <h2 class="start-title">검사할 사진을 고르세요</h2>
+        <h2 class="start-title">검사할 사진이나 영상을 고르세요</h2>
         <p class="start-text">얼굴이 잘 보이는 사진일수록 정확합니다.</p>
         <label class="btn btn-primary" for="input-gallery"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m20.5 16-5-5-8 8.5"/></svg>갤러리에서 선택</label>
         <label class="btn btn-secondary" for="input-camera"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4V8Z"/><circle cx="12" cy="13.5" r="3.5"/></svg>사진 찍기</label>
         <input id="input-camera" type="file" accept="image/*" capture="environment" hidden>
-        <input id="input-gallery" type="file" accept="image/*" hidden>
+        <input id="input-gallery" type="file" accept="image/*,video/*" hidden>
       </div>
       <p class="privacy-note">
-        사진은 최대 1280px로 줄여 분석 서버로만 보내며, 서버에서 일정 기간이 지나면 자동으로 삭제됩니다.
+        사진은 최대 1280px로 줄여 분석 서버로만 보내며, 영상은 고른 장면 한 장만 보냅니다. 서버에서 일정 기간이 지나면 자동으로 삭제됩니다.
       </p>
       <div id="records-box" class="records-box" hidden>
         <button id="btn-clear-records" class="btn btn-ghost btn-small" type="button">이 기기에서 검사한 기록 지우기</button>
@@ -48,9 +48,20 @@
     <section id="view-preview" class="view" hidden>
       <div class="card">
         <img id="preview-image" class="preview-image" alt="선택한 사진 미리보기">
+        <div id="frame-picker" class="frame-picker" hidden>
+          <p id="frame-time" class="frame-time" aria-live="polite"></p>
+          <input id="frame-slider" type="range" min="0" max="0" step="0.1" value="0" aria-label="검사할 장면 위치">
+          <div class="frame-steps">
+            <button class="chip" type="button" data-frame-delta="-5">-5초</button>
+            <button class="chip" type="button" data-frame-delta="-1">-1초</button>
+            <button class="chip" type="button" data-frame-delta="1">+1초</button>
+            <button class="chip" type="button" data-frame-delta="5">+5초</button>
+          </div>
+          <p id="frame-error" class="frame-error" role="alert" hidden></p>
+        </div>
       </div>
-      <button id="btn-inspect" class="btn btn-primary" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>검사하기</button>
-      <button class="btn btn-ghost js-restart" type="button">다른 사진 선택</button>
+      <button id="btn-inspect" class="btn btn-primary" type="button"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg><span id="inspect-label">검사하기</span></button>
+      <button id="btn-preview-restart" class="btn btn-ghost js-restart" type="button">다른 사진 선택</button>
     </section>
 
     <section id="view-loading" class="view" hidden>

@@ -1,6 +1,7 @@
 import * as Manipulator from 'expo-image-manipulator';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { UPLOAD_IMAGE_QUALITY, UPLOAD_MAX_SIDE } from './api';
+import { assertNotTooSmall } from './imageSize';
 
 // 웹과 같은 기준으로 압축한다 (형식은 JPEG, mobile/src/api.js의 UPLOAD_IMAGE_TYPE)
 const MAX_SIZE = UPLOAD_MAX_SIDE;
@@ -36,10 +37,12 @@ export async function prepareMedia({ uri, isVideo = false, durationMs = null }) 
     let frame;
     try {
         frame = await prepareVideoFrame({ uri, timeMs: firstTime, durationMs });
-    } catch {
+    } catch (err) {
+        if (err?.tooSmall) throw err; // 다른 지점을 다시 시도해도 화면 크기는 같다
         try {
             frame = await prepareVideoFrame({ uri, timeMs: 0, durationMs });
-        } catch {
+        } catch (retryErr) {
+            if (retryErr?.tooSmall) throw retryErr;
             throw new Error('영상에서 화면을 가져오지 못했습니다. 다른 영상이나 스크린샷으로 시도해 주세요.');
         }
     }
@@ -64,6 +67,7 @@ async function resizeToJpeg(uri) {
         if (Manipulator.ImageManipulator?.manipulate) {
             const probe = await Manipulator.ImageManipulator.manipulate(uri).renderAsync();
             const { width, height } = probe;
+            assertNotTooSmall(width, height);
             const context = Manipulator.ImageManipulator.manipulate(uri);
             const resize = fitSize(width, height);
             if (resize) context.resize(resize);
@@ -73,15 +77,18 @@ async function resizeToJpeg(uri) {
         }
 
         const probe = await Manipulator.manipulateAsync(uri, []);
+        assertNotTooSmall(probe.width, probe.height);
         const resize = fitSize(probe.width, probe.height);
         const saved = await Manipulator.manipulateAsync(uri, resize ? [{ resize }] : [], {
             compress: JPEG_QUALITY, format: Manipulator.SaveFormat.JPEG, base64: true,
         });
         return { uri: saved.uri, width: saved.width, height: saved.height, base64: saved.base64 };
     } catch (err) {
-        console.warn('[VeritAI] 사진 변환 실패:', uri, err?.message);
+        if (err?.tooSmall) throw err;
+        // 주소에 사진 전체가 들어 있는 경우(데이터 주소)가 있어, 로그와 오류 화면에는 길이를 줄여서 남긴다
+        console.warn('[VeritAI] 사진 변환 실패:', String(uri).slice(0, 80), String(err?.message).slice(0, 200));
         const mediaErr = new Error('사진을 변환하지 못했습니다. 다른 사진으로 시도해 주세요.');
-        mediaErr.detail = `${err?.name || 'Error'}: ${err?.message || String(err)}`;
+        mediaErr.detail = `${err?.name || 'Error'}: ${err?.message || String(err)}`.slice(0, 300);
         throw mediaErr;
     }
 }

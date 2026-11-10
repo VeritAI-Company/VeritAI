@@ -18,7 +18,7 @@ export function createFaceList(faces) {
                 <div class="vr-face-head">
                     <span class="vr-face-name">얼굴 ${i + 1}</span>
                     <span class="vr-track"><span class="vr-fill ${level}" style="width:${percentWidth(faceProb)}"></span></span>
-                    <span class="vr-face-prob" style="color:${getFaceColor(faceProb)}">${faceProb == null ? NO_SCORE_TEXT : formatPercent(faceProb, 0)}</span>
+                    <span class="vr-face-prob" style="color:${getFaceColor(faceProb)}">${faceProb == null ? NO_SCORE_TEXT : formatPercent(faceProb)}</span>
                 </div>
                 <div class="vr-face-info">${escapeHTML(info.join(' · '))}</div>
             </div>`;

@@ -2,6 +2,7 @@ import { View, Text, Image, ActivityIndicator, Pressable } from 'react-native';
 import { useTheme } from '../ui/ThemeContext';
 import { formatTime } from '../media';
 import { Button } from '../ui/common';
+import { FrameSlider } from '../ui/FrameSlider';
 
 export function PreviewScreen({ media, source, frameBusy, frameError, onChangeFrame, onInspect, onCancel }) {
     const { colors, styles } = useTheme();
@@ -55,6 +56,7 @@ function FramePicker({ media, disabled, onChange }) {
     return (
         <View style={styles.framePicker}>
             <Text style={styles.frameHint}>검사할 장면을 고르세요</Text>
+            <FrameSlider durationMs={media.durationMs} valueMs={current} disabled={disabled} onChange={onChange} />
             <View style={styles.frameRow}>
                 {steps.map(step => (
                     <FrameButton key={step.label} label={step.label} disabled={disabled} onPress={() => onChange(current + step.delta)} />

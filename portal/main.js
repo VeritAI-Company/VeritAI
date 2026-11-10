@@ -1,6 +1,7 @@
 import { registerSW } from 'virtual:pwa-register';
 import { startEmbedReport } from './app/embed.js';
 import { cancelFeedback, openFeedback, submitFeedback } from './app/feedback.js';
+import { onFrameSliderChange, onFrameSliderInput, stepFrame } from './app/framePicker.js';
 import { toggleHeatmap } from './app/heatmapPanel.js';
 import { onClearRecordsClick } from './app/records.js';
 import { refreshServerStatus } from './app/serverStatus.js';
@@ -22,6 +23,9 @@ if (import.meta.env?.DEV) {
 $('input-camera').addEventListener('change', handleFileSelected);
 $('input-gallery').addEventListener('change', handleFileSelected);
 $('btn-inspect').addEventListener('click', inspect);
+$('frame-slider').addEventListener('input', onFrameSliderInput);
+$('frame-slider').addEventListener('change', onFrameSliderChange);
+document.querySelectorAll('[data-frame-delta]').forEach(btn => btn.addEventListener('click', () => stepFrame(Number(btn.dataset.frameDelta))));
 $('btn-retry').addEventListener('click', () => (state.image ? inspect() : resetAll()));
 document.querySelectorAll('.js-restart').forEach(btn => btn.addEventListener('click', resetAll));
 $('btn-heatmap').addEventListener('click', toggleHeatmap);

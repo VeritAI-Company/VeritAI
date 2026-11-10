@@ -27,7 +27,7 @@ export async function renderResult(data) {
     $('verdict-fill').className = `fill ${level}`;
     $('verdict-fill').style.width = percentWidth(confidence);
     $('verdict-meter').setAttribute('aria-label', `조작 확률 ${fakePercent}`);
-    $('verdict-detail').textContent = getFaceCountText(faceCount);
+    $('verdict-detail').textContent = getFaceCountText(faceCount, result);
     $('request-id').textContent = data.requestId != null ? `요청 번호 ${data.requestId}` : '';
 
     state.baseImg = await loadImage(state.image.url);
@@ -163,7 +163,7 @@ function renderFaceList(faces) {
         track.append(fill);
         const prob = document.createElement('span');
         prob.className = 'face-prob';
-        prob.textContent = probValue != null ? formatPercent(probValue, 0) : NO_SCORE_TEXT;
+        prob.textContent = probValue != null ? formatPercent(probValue) : NO_SCORE_TEXT;
         prob.style.color = getFaceColor(probValue);
         row.append(name, track, prob);
 

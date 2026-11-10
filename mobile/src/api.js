@@ -21,6 +21,7 @@ export function isRetryablePollStatus(status) {
 export const UPLOAD_MAX_SIDE = 1280;
 export const UPLOAD_IMAGE_TYPE = 'image/jpeg';
 export const UPLOAD_IMAGE_QUALITY = 0.92;
+export const MIN_IMAGE_SIDE = 80; // 짧은 변이 이보다 작은 사진은 검사하지 않는다 (shared/api.js와 같은 값, 테스트가 검사)
 
 export class ApiError extends Error {
     constructor(message, status = 0) {
