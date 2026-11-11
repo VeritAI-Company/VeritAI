@@ -11,8 +11,18 @@ import { setupReportWindow } from './window.js';
 // 결과창은 사이트 CSS가 섞이지 않도록 Shadow DOM 안에 넣는다. 결과창이 여러 개여도 상자(host)는 하나를 함께 쓴다
 let reportRoot = null;
 
+// 끌어다 놓기 모달과 z-index가 같아서 문서에서 나중에 만든 쪽이 위에 온다. 상자가 모달보다 앞에 있으면 맨 뒤로 옮겨 모달에 가려지지 않게 한다
+function keepAboveModal(host) {
+    const modals = document.querySelectorAll('.veritai-standalone-modal');
+    const lastModal = modals[modals.length - 1];
+    if (lastModal && host.compareDocumentPosition(lastModal) & Node.DOCUMENT_POSITION_FOLLOWING) document.body.appendChild(host);
+}
+
 function getReportRoot() {
-    if (reportRoot && reportRoot.host.isConnected) return reportRoot;
+    if (reportRoot && reportRoot.host.isConnected) {
+        keepAboveModal(reportRoot.host);
+        return reportRoot;
+    }
     const host = document.createElement('veritai-report-host');
     host.style.cssText = 'position:absolute; top:0; left:0; width:0; height:0; z-index:2147483647; display:block; overflow:visible;';
     document.body.appendChild(host);
@@ -60,7 +70,7 @@ export function showReportBox(e, { media, status, data, badge, reportKey, report
     const meterLevel = getProbLevel(confidence);
     const verdictDesc = getVerdictDescription(isFakeResult, confidence);
     const reasonText = getDecisionReasonText(result);
-    const metaParts = [getFaceCountText(faceCount)];
+    const metaParts = [getFaceCountText(faceCount, result)];
     if (isVideoMedia && data.frameTime != null) metaParts.push(`영상 ${formatFrameTime(data.frameTime)} 장면`);
 
     const detailsBox = document.createElement('div');

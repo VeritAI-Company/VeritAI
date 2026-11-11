@@ -6,6 +6,7 @@
 - 공유받기: SNS, 갤러리, 파일 앱의 공유 버튼으로 VeritAI 선택 (expo-share-intent)
 - 사진 찍기, 갤러리에서 사진과 영상 선택 (expo-image-picker)
 - 사진은 최대 1280px JPEG로 축소, 처음엔 1초 지점, 미리보기에서 장면 선택 (src/media.js)
+- 영상 장면 고르기: 시간 막대(끌거나 눌러서 이동, src/ui/FrameSlider.js), -5초, -1초, +1초, +5초, 구간 버튼. 막대와 구간 버튼은 영상 길이가 있을 때만 나온다
 - 분석 API 호출, 상태 조회, 오류 처리 (src/api.js)
 - 검사 기록: 폰에 최대 50개, 사진은 저장하지 않음 (src/history.js)
 - 자세한 리포트(얼굴 영역, 히트맵, 신고)는 포털을 WebView로 다시 씀 (`portal/?embed=report`)
@@ -24,8 +25,15 @@ mobile/
    ├─ config.js    서버 주소 (API_BASE, PORTAL_URL)
    ├─ api.js       업로드, 폴링, 조회
    ├─ media.js     사진 축소, 영상 프레임 추출
+   ├─ imageSize.js 너무 작은 사진 판별 (짧은 변 80px 미만)
+   ├─ sliderMath.js 장면 막대의 위치와 시각 계산, 영상 길이 읽기
+   ├─ judgment.js  판정 기준과 문구 (shared/judgment.js 복사본)
+   ├─ records.js   내 검사 기록 지우기 (shared/records.js 복사본)
+   ├─ format.js    기록 목록의 출처와 날짜 표시
    ├─ history.js   검사 기록 저장
-   └─ theme.js     색상
+   ├─ theme.js     색상
+   ├─ screens/     홈, 미리보기, 분석 중, 결과, 웹 리포트, 오류, 링크 안내 화면
+   └─ ui/          공통 버튼, 테마, 스타일, 장면 막대 (FrameSlider.js)
 ```
 
 ## 처음 설치

@@ -51,6 +51,9 @@ function isBehind(other, media) {
     return rectArea(or) > rectArea(mr);
 }
 
+// 끌어다 놓기 모달은 잠깐 뜨는 화면이다. 모달 사진이 아래 페이지 사진의 버튼과 배지를 숨기면, 모달을 닫아도 숨김이 풀리지 않는다
+const inModal = (el) => Boolean(el.closest?.('.veritai-standalone-modal'));
+
 function suppressMedia(owner) {
     const btn = getCheckButton(owner);
     if (btn) btn.remove();
@@ -59,6 +62,7 @@ function suppressMedia(owner) {
 }
 
 export function suppressOverlappingButtons(media) {
+    if (inModal(media)) return;
     document.querySelectorAll('.veritai-check-btn').forEach(btn => {
         const owner = getOwnerMedia(btn);
         if (!owner || owner === media || !isBehind(owner, media)) return;
@@ -70,7 +74,7 @@ export function isCoveredByOtherMedia(media) {
     const mr = media.getBoundingClientRect();
     if (!mr.width) return false;
     return Array.from(document.querySelectorAll('img, video')).some(other => {
-        if (other === media || !other.isConnected) return false;
+        if (other === media || !other.isConnected || inModal(other)) return false;
         const or = other.getBoundingClientRect();
         if (!or.width || or.right < mr.left || or.left > mr.right || or.bottom < mr.top || or.top > mr.bottom) return false;
         if (!isVisibleMedia(other)) return false;
@@ -90,6 +94,7 @@ function rectsOverlap(a, b) {
 }
 
 export function hideCoveredUIs(topMedia) {
+    if (inModal(topMedia)) return;
     const topRect = topMedia.getBoundingClientRect();
     if (!topRect.width) return;
     const owners = new Set();
@@ -111,6 +116,6 @@ export function isBehindInspectedMedia(media) {
         const id = host.dataset.veritaiFor;
         if (!id || id === media.dataset.veritaiId) return false;
         const inspected = findMediaById(id);
-        return Boolean(inspected && inspected.isConnected && isBehind(media, inspected));
+        return Boolean(inspected && inspected.isConnected && !inModal(inspected) && isBehind(media, inspected));
     });
 }

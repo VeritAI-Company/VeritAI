@@ -15,7 +15,7 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
     const faceCount = Number.isFinite(result.faceCount) ? result.faceCount : faces.length;
     const verdictDesc = getVerdictDescription(isFake, confidence);
     const reasonText = getDecisionReasonText(result);
-    const meta = [getFaceCountText(faceCount)];
+    const meta = [getFaceCountText(faceCount, result)];
     if (media?.mediaType === 'video_frame' && media.frameTimeMs != null) meta.push(`영상 ${formatTime(media.frameTimeMs)} 장면`);
     const [showAllFaces, setShowAllFaces] = useState(false);
     const { visible: visibleFaces, hidden: hiddenFaces } = selectVisibleFaces(faces, showAllFaces);
@@ -61,7 +61,7 @@ export function ResultScreen({ data, media, hasImage, onReport, onOtherFrame, on
                                         <View style={[styles.fill, { width: percentWidth(prob), backgroundColor: faceColor(prob, colors) }]} />
                                     </View>
                                     <Text style={[styles.faceProb, { color: faceColor(prob, colors) }]}>
-                                        {prob != null ? formatPercent(prob, 0) : NO_SCORE_TEXT}
+                                        {prob != null ? formatPercent(prob) : NO_SCORE_TEXT}
                                     </Text>
                                 </View>
                                 <Text style={styles.faceInfo}>{info}</Text>

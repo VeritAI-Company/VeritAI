@@ -47,7 +47,7 @@ export const HEATMAP_HIDE_FULL_PROB = 0.01; // 사진 전체 확률이 1% 미만
 
 export function getHeatmapNoteText(label, prob) {
     const lines = [`${label} 영역의 조작 확률은 ${formatPercent(prob)}입니다. 색은 이 영역 안에서 AI가 많이 본 곳이며, 진하기는 사진끼리 비교하는 값이 아닙니다.`];
-    if (prob < HEATMAP_HIDE_FULL_PROB) lines.push('이 영역에서는 조작 근거를 찾지 못해 표시할 색이 없습니다.');
+    if (prob < HEATMAP_HIDE_FULL_PROB) lines.push('이 영역은 조작 가능성이 매우 낮습니다. 색은 조작 흔적이 아니라, 정상이라고 판단할 때 AI가 많이 본 곳입니다.');
     else if (prob < HEATMAP_WEAK_PROB) lines.push('조작 근거가 약한 영역이라 히트맵은 참고용입니다.');
     return lines.join(' ');
 }

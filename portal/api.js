@@ -33,11 +33,12 @@ async function readJson(response) {
     try { return await response.json(); } catch { return null; }
 }
 
-export async function requestDetection(blob, onStatus = () => {}) {
+// mediaType: 사진이면 'image', 영상에서 고른 장면이면 'video_frame' (확장, 앱과 같은 값)
+export async function requestDetection(blob, onStatus = () => {}, mediaType = 'image') {
     const ext = blob.type === 'image/webp' ? 'webp' : 'jpg';
     const formData = new FormData();
     formData.append('file', blob, `capture.${ext}`);
-    formData.append('mediaType', 'image');
+    formData.append('mediaType', mediaType);
     formData.append('clientType', 'pwa-portal');
     formData.append('analysisMode', ANALYSIS_MODE);
     formData.append('ownerToken', getOwnerToken()); // 나중에 내 기록을 지울 수 있도록 함께 보낸다

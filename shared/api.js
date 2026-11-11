@@ -22,6 +22,10 @@ export const UPLOAD_MAX_SIDE = 1280;           // 긴 변 최대 길이(px)
 export const UPLOAD_IMAGE_TYPE = 'image/jpeg'; // 다시 압축할 때 형식
 export const UPLOAD_IMAGE_QUALITY = 0.92;      // 다시 압축할 때 품질
 
+// 짧은 변이 이보다 작은 사진은 얼굴이 너무 작아 AI가 쓰지 못한다 (AI는 64px 미만 얼굴을 제외). 확장이 화면에서 80px 미만 사진을 건너뛰는 기준과 같고,
+// PWA와 앱은 이 값 미만의 사진과 영상 화면을 검사 전에 거절한다. mobile/src/api.js에도 같은 값이 있고, 테스트가 같은지 검사한다
+export const MIN_IMAGE_SIDE = 80;
+
 export function apiUrls(base) {
     const root = String(base).replace(/\/$/, '');
     return { detections: `${root}/api/detections`, feedback: `${root}/api/feedback`, queue: `${root}/api/detections/queue` };

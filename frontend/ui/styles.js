@@ -50,7 +50,7 @@ export const VERITAI_CORE_CSS = `
 
     .veritai-details-box {
         position: absolute; top: 0; left: 0; z-index: 2147483647; box-sizing: border-box; margin: 0;
-        width: 304px; max-height: 500px; overflow-y: auto; padding: 0;
+        width: 304px; max-height: 500px; overflow-y: auto; overscroll-behavior: contain; padding: 0;
         background: var(--vr-bg); color: var(--vr-text); border: 1px solid var(--vr-border); border-radius: 12px;
         box-shadow: var(--vr-shadow); font: 400 13px/1.55 ${FONT}; text-align: left; letter-spacing: normal;
         cursor: default; pointer-events: auto; animation: veritai-rise 0.18s ease-out;
@@ -156,6 +156,8 @@ export const VERITAI_CORE_CSS = `
     .veritai-standalone-modal { position: fixed; inset: 0; width: 100vw; height: 100vh; background: rgba(15, 17, 20, 0.82); z-index: 2147483647; display: flex; flex-direction: column; align-items: center; justify-content: center; }
     .veritai-standalone-modal .vr-modal-close { position: absolute; top: 18px; right: 22px; z-index: 10; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 17px; border: 1px solid var(--vr-border); background: var(--vr-bg); color: var(--vr-text); font: 600 13px/1 ${FONT}; cursor: pointer; }
     .veritai-standalone-modal .vr-modal-close svg { width: 14px; height: 14px; }
+    .veritai-standalone-modal .vr-modal-error { max-width: min(420px, 80vw); padding: 20px 24px; border-radius: 10px; border: 1px solid var(--vr-border); background: var(--vr-bg); color: var(--vr-text); font: 500 14px/1.6 ${FONT}; text-align: center; }
+    .veritai-standalone-modal .vr-modal-note { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: 80vw; padding: 8px 14px; border-radius: 16px; border: 1px solid var(--vr-border); background: var(--vr-bg); color: var(--vr-text); font: 500 13px/1.4 ${FONT}; }
 
     .veritai-status-badge:focus-visible, .veritai-check-btn:focus-visible, .veritai-details-box button:focus-visible, .veritai-close-btn:focus-visible, .vr-modal-close:focus-visible { outline: 2px solid #8fb3f0 !important; outline-offset: 2px !important; }
 `;

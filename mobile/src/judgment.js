@@ -27,7 +27,6 @@ export function readDeepfakeFlag(result) {
     return parseDeepfakeFlag(result?.isDeepfake ?? result?.deepfake) === true;
 }
 
-// 확률은 0~1 사이로 자른다
 export function clampProb(value) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0;
@@ -67,8 +66,12 @@ export function getVerdictDescription(isFake, confidence) {
     return confidence >= FACE_CAUTION_MIN ? '조작 흔적이 약하게 보이지만 기준보다 낮습니다.' : '조작 흔적을 찾지 못했습니다.';
 }
 
-export function getFaceCountText(faceCount) {
-    return faceCount > 0 ? `얼굴 ${faceCount}개 검사` : '얼굴을 찾지 못해 사진 전체로 검사';
+export function getFaceCountText(faceCount, result) {
+    if (faceCount <= 0) return '얼굴을 찾지 못해 사진 전체로 검사';
+    const cause = getFallbackCause(result);
+    if (cause === 'low_quality') return `얼굴 ${faceCount}개를 찾았지만 모두 화질이 낮아 사진 전체로 검사`;
+    if (cause === 'unreadable') return `얼굴 ${faceCount}개를 찾았지만 분석에 쓰지 못해 사진 전체로 검사`;
+    return `얼굴 ${faceCount}개 검사`;
 }
 
 export function faceFakeProb(face) {
@@ -119,9 +122,26 @@ export function getDecisionInfo(result) {
     };
 }
 
+// 얼굴은 찾았지만 사진 전체로 판정한 이유. 서버는 화질이 낮음(poor)인 얼굴을 분석에서 빼므로, 찾은 얼굴이 모두 poor이면 화질 때문이다.
+// low_quality: 모두 화질 낮음, unreadable: 그 밖의 이유(얼굴 영역을 읽지 못함 등), null: 해당 없음 (얼굴이 없거나 얼굴을 분석함)
+function getFallbackCause(result) {
+    if (getDecisionInfo(result).scope !== 'full_fallback') return null;
+    const faces = Array.isArray(result?.faces) ? result.faces : [];
+    const count = Number.isFinite(result?.faceCount) ? result.faceCount : faces.length;
+    if (count <= 0) return null;
+    return faces.length === count && faces.every(face => face?.quality?.label === 'poor') ? 'low_quality' : 'unreadable';
+}
+
+const FALLBACK_REASON_TEXT = {
+    low_quality: '찾은 얼굴이 모두 화질이 낮아(선명도, 밝기, 대비, 얼굴 크기 등으로 평가) 분석에서 제외하고 사진 전체로 판정했습니다. 참고용이며, 선명하고 얼굴이 크게 나온 사진으로 다시 검사해 보세요.',
+    unreadable: '얼굴은 찾았지만 얼굴 영역을 읽지 못해 사진 전체로 판정했습니다. 사진 전체 판정은 정확도가 낮아 참고용입니다.',
+    none: '얼굴을 찾지 못해 사진 전체로 판정했습니다. 얼굴이 없는 사진은 정확도가 낮아 참고용입니다.',
+};
+
 export function getDecisionReasonText(result) {
     const info = getDecisionInfo(result);
-    const pct = value => formatPercent(value ?? 0, 0);
+    const pct = value => formatPercent(value ?? 0);
+    const pctWhole = value => formatPercent(value ?? 0, 0); // 기준값(80%)은 설정값이라 정수로 둔다
     switch (info.reason) {
         case 'high_single_face_probability':
             return `한 얼굴에서 강한 조작 흔적이 보였습니다 (가장 높은 얼굴 ${pct(info.maxProbability)}).`;
@@ -129,12 +149,12 @@ export function getDecisionReasonText(result) {
             return `여러 얼굴에서 전반적으로 조작 흔적이 보였습니다 (얼굴 평균 ${pct(info.averageProbability)}).`;
         case 'below_combined_thresholds':
             if (info.maxProbability != null && info.maxProbability >= FACE_FAKE_MIN) {
-                return `한 얼굴이 ${pct(info.maxProbability)}로 나왔지만 단독 기준(${pct(info.highMaxThreshold)})보다 낮고, 얼굴 평균도 ${pct(info.averageProbability)}라 정상으로 판정했습니다.`;
+                return `한 얼굴이 ${pct(info.maxProbability)}로 나왔지만 단독 기준(${pctWhole(info.highMaxThreshold)})보다 낮고, 얼굴 평균도 ${pct(info.averageProbability)}라 정상으로 판정했습니다.`;
             }
             return null;
         case 'full_image_threshold_met':
         case 'full_image_below_threshold':
-            return '얼굴을 찾지 못해 사진 전체로 판정했습니다. 얼굴이 없는 사진은 정확도가 낮아 참고용입니다.';
+            return FALLBACK_REASON_TEXT[getFallbackCause(result) ?? 'none'];
         default:
             return null;
     }

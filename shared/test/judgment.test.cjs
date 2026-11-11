@@ -60,7 +60,10 @@ test('히트맵 안내 문구는 확률과 진하기 비교 주의를 함께 알
     assert.match(strong, /82\.0%/);
     assert.match(strong, /사진끼리 비교하는 값이 아닙니다/);
     assert.match(heatmap.getHeatmapNoteText('얼굴 1', 0.1), /참고용/);
-    assert.match(heatmap.getHeatmapNoteText('사진 전체', 0.001), /표시할 색이 없습니다/);
+    const veryLow = heatmap.getHeatmapNoteText('사진 전체', 0.001);
+    assert.match(veryLow, /조작 가능성이 매우 낮습니다/);
+    assert.match(veryLow, /정상이라고 판단할 때 AI가 많이 본 곳/);
+    assert.doesNotMatch(veryLow, /표시할 색이 없습니다/); // 색은 그대로 칠하므로 색이 없다는 안내를 하지 않는다
 });
 
 test('판정 기준값과 판정 이유 문구가 웹과 앱에서 같다', () => {
@@ -93,12 +96,27 @@ test('사진 압축 기준이 확장, 작업 창, PWA, 앱에서 같다', () => 
     const api = compile(path.join(root, 'shared', 'api.js'));
     assert.equal(api.UPLOAD_MAX_SIDE, 1280);
     assert.equal(api.UPLOAD_IMAGE_TYPE, 'image/jpeg');
-    for (const key of ['UPLOAD_MAX_SIDE', 'UPLOAD_IMAGE_TYPE', 'UPLOAD_IMAGE_QUALITY']) assert.equal(mobileApi[key], api[key], key);
+    assert.equal(api.MIN_IMAGE_SIDE, 80);
+    for (const key of ['UPLOAD_MAX_SIDE', 'UPLOAD_IMAGE_TYPE', 'UPLOAD_IMAGE_QUALITY', 'MIN_IMAGE_SIDE']) assert.equal(mobileApi[key], api[key], key);
     // worker.js는 빌드 때 그대로 복사되는 파일이라 shared를 가져오지 못해 값을 글자로 비교한다
     const worker = fs.readFileSync(path.join(root, 'frontend', 'worker.js'), 'utf8');
     assert.match(worker, new RegExp(`MAX_UPLOAD_SIZE = ${api.UPLOAD_MAX_SIDE};`));
     assert.match(worker, new RegExp(`UPLOAD_TYPE = '${api.UPLOAD_IMAGE_TYPE}';`));
     assert.match(worker, new RegExp(`UPLOAD_QUALITY = ${api.UPLOAD_IMAGE_QUALITY};`));
+});
+
+test('너무 작은 사진 판별이 웹과 앱에서 같다 (짧은 변 80px 미만)', () => {
+    const web = compile(path.join(root, 'portal', 'image.js'));
+    const app = compile(path.join(root, 'mobile', 'src', 'imageSize.js'), { alias: { '@react-native-async-storage/async-storage': asyncStorageMock }, define: { __DEV__: 'false' } });
+    const cases = [[79, 200, true], [200, 79, true], [80, 79, true], [80, 80, false], [81, 80, false], [1280, 960, false], [40, 30, true], [0, 0, false], [NaN, 100, false], [undefined, 100, false]];
+    for (const [width, height, expected] of cases) {
+        assert.equal(web.isTooSmall(width, height), expected, `web ${width}x${height}`);
+        assert.equal(app.isTooSmall(width, height), expected, `app ${width}x${height}`);
+    }
+    assert.equal(web.TOO_SMALL_MESSAGE, app.TOO_SMALL_MESSAGE);
+    assert.match(app.TOO_SMALL_MESSAGE, /80px 이상/);
+    assert.throws(() => app.assertNotTooSmall(79, 200), (err) => err.tooSmall === true && err.message === app.TOO_SMALL_MESSAGE);
+    assert.doesNotThrow(() => app.assertNotTooSmall(80, 80));
 });
 
 test('결과 조회 다시 시도 기준이 웹과 앱에서 같다', () => {
@@ -146,6 +164,33 @@ test('확률 표시: 기준 바로 아래 값이 기준값으로 보이지 않�
 test('판정 이유 문구가 경계값에서 모순되지 않는다', () => {
     const edge = { decisionReason: 'below_combined_thresholds', maxProbability: 0.797, averageProbability: 0.4996 };
     for (const lib of [shared, mobile]) {
-        assert.equal(lib.getDecisionReasonText(edge), '한 얼굴이 79%로 나왔지만 단독 기준(80%)보다 낮고, 얼굴 평균도 49%라 정상으로 판정했습니다.');
+        assert.equal(lib.getDecisionReasonText(edge), '한 얼굴이 79.7%로 나왔지만 단독 기준(80%)보다 낮고, 얼굴 평균도 49.9%라 정상으로 판정했습니다.');
+    }
+});
+
+test('얼굴은 찾았지만 사진 전체로 판정한 경우, 이유에 맞는 문구를 보여 준다 (웹과 앱 같음)', () => {
+    const poor = { quality: { label: 'poor' } };
+    const good = { quality: { label: 'good' } };
+    const fallback = (faces, extra = {}) => ({ analysisScope: 'full_fallback', decisionReason: 'full_image_below_threshold', faceCount: faces.length, faces, ...extra });
+    for (const lib of [shared, mobile]) {
+        const allPoor = fallback([poor, poor]);
+        assert.equal(lib.getFaceCountText(2, allPoor), '얼굴 2개를 찾았지만 모두 화질이 낮아 사진 전체로 검사');
+        assert.match(lib.getDecisionReasonText(allPoor), /모두 화질이 낮아/);
+        assert.match(lib.getDecisionReasonText(allPoor), /다시 검사해 보세요/);
+
+        const mixed = fallback([poor, good]);
+        assert.equal(lib.getFaceCountText(2, mixed), '얼굴 2개를 찾았지만 분석에 쓰지 못해 사진 전체로 검사');
+        assert.match(lib.getDecisionReasonText(mixed), /얼굴 영역을 읽지 못해/);
+
+        const noList = { analysisScope: 'full_fallback', decisionReason: 'full_image_below_threshold', faceCount: 2 };
+        assert.equal(lib.getFaceCountText(2, noList), '얼굴 2개를 찾았지만 분석에 쓰지 못해 사진 전체로 검사');
+
+        const noFace = fallback([]);
+        assert.equal(lib.getFaceCountText(0, noFace), '얼굴을 찾지 못해 사진 전체로 검사');
+        assert.match(lib.getDecisionReasonText(noFace), /^얼굴을 찾지 못해 사진 전체로 판정했습니다/);
+
+        const analyzed = { analysisScope: 'faces', faceCount: 2, faces: [good, good] };
+        assert.equal(lib.getFaceCountText(2, analyzed), '얼굴 2개 검사');
+        assert.equal(lib.getFaceCountText(2), '얼굴 2개 검사');
     }
 });
